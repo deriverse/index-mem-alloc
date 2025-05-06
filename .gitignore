@@ -1,0 +1,28 @@
+# Rust/Cargo build artifacts
+dist/
+target/
+**/*.rs.bk
+
+.rustup
+
+# Intermediate build files
+*.o
+*.so
+*.dylib
+*.dll
+
+# Cargo-specific files
+Cargo.lock
+
+# Editor & IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
