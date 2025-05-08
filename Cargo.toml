@@ -7,6 +7,8 @@ authors = ["Deriverse <info@deriverse.io>"]
 license = "Apache-2.0"
 homepage = "https://deriverse.io/"
 
+[dependencies]
+bytemuck = "1.23.0"
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"
