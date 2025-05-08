@@ -1,6 +1,6 @@
 use crate::MemoryMapError;
 
-pub(crate) fn get_first_zero_bit(pattern: u64, bits: isize) -> Result<isize, MemoryMapError> {
+pub(crate) fn get_first_zero_bit(pattern: u64, bits: usize) -> Result<usize, MemoryMapError> {
     if bits < 33 {
         for j in 0..bits {
             if pattern & (1 << j) == 0 {
