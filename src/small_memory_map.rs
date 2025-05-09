@@ -1,17 +1,21 @@
 use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
-use std::cell::RefMut;
+use std::{
+    cell::{RefCell},
+    rc::Rc,
+};
 
 /// Small memory map implementation (2 levels)
+#[derive(Clone)]
 pub struct SmallMemoryMap<'a> {
-    memory: RefMut<'a, &'a mut [u8]>,
+    memory: Rc<RefCell<&'a mut [u8]>>,
     offset: usize,
 }
 
 impl<'a> SmallMemoryMap<'a> {
     /// Create a new small memory map
     pub(crate) fn new(
-        memory: RefMut<'a, &'a mut [u8]>,
+        memory: Rc<RefCell<&'a mut [u8]>>,
         offset: usize,
     ) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for small map:
@@ -20,8 +24,11 @@ impl<'a> SmallMemoryMap<'a> {
         let required_size = (1 + 64) * size_of::<u64>();
 
         // Check if there's enough memory
-        if memory.len() - offset < required_size {
-            return Err(MemoryMapError::InsufficientMemory);
+        {
+            let memory_ref = memory.borrow();
+            if memory_ref.len() - offset < required_size {
+                return Err(MemoryMapError::InsufficientMemory);
+            }
         }
 
         Ok(Self { memory, offset })
@@ -29,9 +36,10 @@ impl<'a> SmallMemoryMap<'a> {
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
+        let mut memory = self.memory.borrow_mut();
         // Safe to use `cast_slice_mut` because we already checked alignment in the
         // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
+        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // First level allocation
         let first = get_first_zero_bit(u64_slice[0], 64)?;
@@ -60,10 +68,11 @@ impl<'a> SmallMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
+        let mut memory = self.memory.borrow_mut();
 
         // Safe to use cast_slice_mut because we already checked alignment in the
         // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
+        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // Small memory map - 2 levels
         let first = index >> 6;

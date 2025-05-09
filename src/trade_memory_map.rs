@@ -1,17 +1,21 @@
 use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
-use std::cell::RefMut;
+use std::{
+    cell::{RefCell},
+    rc::Rc,
+};
 
 /// Standard memory map implementation (3 levels, 4 bits at first level)
+#[derive(Clone)]
 pub struct StandardMemoryMap<'a> {
-    memory: RefMut<'a, &'a mut [u8]>,
+    memory: Rc<RefCell<&'a mut [u8]>>,
     offset: usize,
 }
 
 impl<'a> StandardMemoryMap<'a> {
     /// Create a new standard memory map
     pub(crate) fn new(
-        memory: RefMut<'a, &'a mut [u8]>,
+        memory: Rc<RefCell<&'a mut [u8]>>,
         offset: usize,
     ) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for standard map:
@@ -21,8 +25,11 @@ impl<'a> StandardMemoryMap<'a> {
         let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
 
         // Check if there's enough memory
-        if memory.len() - offset < required_size {
-            return Err(MemoryMapError::InsufficientMemory);
+        {
+            let memory_ref = memory.borrow();
+            if memory_ref.len() - offset < required_size {
+                return Err(MemoryMapError::InsufficientMemory);
+            }
         }
 
         Ok(Self { memory, offset })
@@ -30,9 +37,10 @@ impl<'a> StandardMemoryMap<'a> {
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
+        let mut memory = self.memory.borrow_mut();
         // Safe to use `cast_slice_mut` because we already checked alignment in the
         // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
+        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // First level allocation (4 bits)
         let first = get_first_zero_bit(u64_slice[0], 4)?;
@@ -72,10 +80,11 @@ impl<'a> StandardMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
+        let mut memory = self.memory.borrow_mut();
 
         // Safe to use cast_slice_mut because we already checked alignment in the
         // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
+        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // standard memory map - 3 levels
         let first = index >> 12;
