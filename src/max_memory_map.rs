@@ -1,9 +1,6 @@
 use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
-use std::{
-    cell::{RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 /// Max memory map implementation (3 levels, 64 bits at first level)
 #[derive(Clone)]
@@ -37,7 +34,10 @@ impl<'a> MaxMemoryMap<'a> {
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self
+            .memory
+            .try_borrow_mut()
+            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
         // Safe to use `cast_slice_mut` because we already checked alignment in the
         // constructor
         let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
@@ -80,7 +80,10 @@ impl<'a> MaxMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self
+            .memory
+            .try_borrow_mut()
+            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
 
         // Safe to use cast_slice_mut because we already checked alignment in the
         // constructor

@@ -46,7 +46,11 @@ mod tests {
     fn test_get_first_zero_bit_empty_pattern() {
         // Test with all bits zero (should return the first bit)
         let result = get_first_zero_bit(0, 64);
-        assert_eq!(result.unwrap(), 0, "First zero bit in empty pattern should be 0");
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "First zero bit in empty pattern should be 0"
+        );
     }
 
     #[test]
@@ -61,17 +65,29 @@ mod tests {
         // Pattern with all bits in first 16 bits set
         let pattern = 0xFFFF; // First 16 bits set
         let result = get_first_zero_bit(pattern, 64);
-        assert_eq!(result.unwrap(), 16, "First zero bit should be at position 16");
+        assert_eq!(
+            result.unwrap(),
+            16,
+            "First zero bit should be at position 16"
+        );
 
         // Pattern with all bits in first 32 bits set
         let pattern = 0xFFFFFFFF; // First 32 bits set
         let result = get_first_zero_bit(pattern, 64);
-        assert_eq!(result.unwrap(), 32, "First zero bit should be at position 32");
+        assert_eq!(
+            result.unwrap(),
+            32,
+            "First zero bit should be at position 32"
+        );
 
         // Pattern with bits set up to position 48
         let pattern = 0xFFFFFFFFFFFF; // First 48 bits set
         let result = get_first_zero_bit(pattern, 64);
-        assert_eq!(result.unwrap(), 48, "First zero bit should be at position 48");
+        assert_eq!(
+            result.unwrap(),
+            48,
+            "First zero bit should be at position 48"
+        );
     }
 
     #[test]
@@ -81,8 +97,10 @@ mod tests {
 
         // Limit search to first 8 bits (should fail)
         let result = get_first_zero_bit(pattern, 8);
-        assert!(matches!(result, Err(MemoryMapError::NoAvailableSlots)),
-                "Should return error when no zero bits in range");
+        assert!(
+            matches!(result, Err(MemoryMapError::NoAvailableSlots)),
+            "Should return error when no zero bits in range"
+        );
 
         // Limit search to first 32 bits (should find bit 16)
         let result = get_first_zero_bit(pattern, 32);
@@ -94,8 +112,10 @@ mod tests {
         // Test with all bits set (should return error)
         let pattern = 0xFFFFFFFFFFFFFFFF; // All 64 bits set
         let result = get_first_zero_bit(pattern, 64);
-        assert!(matches!(result, Err(MemoryMapError::NoAvailableSlots)),
-                "Should return error when all bits are set");
+        assert!(
+            matches!(result, Err(MemoryMapError::NoAvailableSlots)),
+            "Should return error when all bits are set"
+        );
     }
 
     #[test]

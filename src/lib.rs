@@ -103,22 +103,31 @@ impl<'a> MemoryMap<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, mem::{size_of}, rc::Rc};
+    use std::{cell::RefCell, mem::size_of, rc::Rc};
 
     // Create aligned memory buffer for testing
     fn create_aligned_buffer(size: usize) -> Rc<RefCell<&'static mut [u8]>> {
         // Create a buffer large enough for any type of map
         let required_size = (1 + 64 + 64 * 64) * size_of::<u64>(); // Size for Max map
-        let size = if size < required_size { required_size } else { size };
+        let size = if size < required_size {
+            required_size
+        } else {
+            size
+        };
 
         let data = vec![0u8; size + 16]; // Add extra space for alignment
 
         // Ensure 8-byte alignment
         let ptr = data.as_ptr();
         let misalignment = ptr as usize % 8;
-        let alignment_offset = if misalignment == 0 { 0 } else { 8 - misalignment };
+        let alignment_offset = if misalignment == 0 {
+            0
+        } else {
+            8 - misalignment
+        };
 
-        // SAFETY: This is safe in tests since the data lives for the entire test duration
+        // SAFETY: This is safe in tests since the data lives for the entire test
+        // duration
         let data_ptr = Box::leak(data.into_boxed_slice());
         let aligned_slice = &mut data_ptr[alignment_offset..];
 
@@ -140,9 +149,14 @@ mod tests {
         // Ensure we start with aligned memory, then offset by 1
         let ptr = data.as_ptr();
         let misalignment = ptr as usize % 8;
-        let alignment_offset = if misalignment == 0 { 1 } else { 9 - misalignment };
+        let alignment_offset = if misalignment == 0 {
+            1
+        } else {
+            9 - misalignment
+        };
 
-        // SAFETY: This is safe in tests since the data lives for the entire test duration
+        // SAFETY: This is safe in tests since the data lives for the entire test
+        // duration
         let data_ptr = Box::leak(data.into_boxed_slice());
         let unaligned_slice = &mut data_ptr[alignment_offset..];
 
@@ -168,26 +182,33 @@ mod tests {
             let unaligned_ref = unaligned_rc.borrow();
 
             // Print diagnostic info
-            println!("Aligned buffer address: {:p}, aligned? {}",
-                     aligned_ref.as_ptr(),
-                     (aligned_ref.as_ptr() as usize) % 8 == 0);
+            println!(
+                "Aligned buffer address: {:p}, aligned? {}",
+                aligned_ref.as_ptr(),
+                (aligned_ref.as_ptr() as usize) % 8 == 0
+            );
 
-            println!("Unaligned buffer address: {:p}, aligned? {}",
-                     unaligned_ref.as_ptr(),
-                     (unaligned_ref.as_ptr() as usize) % 8 == 0);
+            println!(
+                "Unaligned buffer address: {:p}, aligned? {}",
+                unaligned_ref.as_ptr(),
+                (unaligned_ref.as_ptr() as usize) % 8 == 0
+            );
 
             // Verify buffer lengths are sufficient
             println!("Aligned buffer length: {}", aligned_ref.len());
             println!("Unaligned buffer length: {}", unaligned_ref.len());
         }
 
-        // Test 1: Aligned memory should work fine with Small map type (smallest requirements)
+        // Test 1: Aligned memory should work fine with Small map type (smallest
+        // requirements)
         let aligned_result = MemoryMap::new(aligned_rc.clone(), 0, MapType::Small);
         if let Err(err) = &aligned_result {
             println!("Failed to create map with aligned memory: {:?}", err);
         }
-        assert!(aligned_result.is_ok(),
-                "MemoryMap creation should succeed with aligned memory");
+        assert!(
+            aligned_result.is_ok(),
+            "MemoryMap creation should succeed with aligned memory"
+        );
 
         // Test 2: Unaligned memory should produce alignment error
         let unaligned_result = MemoryMap::new(unaligned_rc.clone(), 0, MapType::Small);

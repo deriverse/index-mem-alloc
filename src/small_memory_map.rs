@@ -1,9 +1,6 @@
 use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
-use std::{
-    cell::{RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 /// Small memory map implementation (2 levels)
 #[derive(Clone)]
@@ -36,7 +33,10 @@ impl<'a> SmallMemoryMap<'a> {
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self
+            .memory
+            .try_borrow_mut()
+            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
         // Safe to use `cast_slice_mut` because we already checked alignment in the
         // constructor
         let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
@@ -68,7 +68,10 @@ impl<'a> SmallMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self
+            .memory
+            .try_borrow_mut()
+            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
 
         // Safe to use cast_slice_mut because we already checked alignment in the
         // constructor
@@ -107,14 +110,18 @@ mod tests {
             data = vec![0u8; required_size * 2 + alignment_offset];
         }
 
-        // SAFETY: This is safe in tests since the data lives for the entire test duration
+        // SAFETY: This is safe in tests since the data lives for the entire test
+        // duration
         let data_ptr = Box::leak(data.into_boxed_slice());
         let data_slice = &mut data_ptr[alignment_offset..];
         let data_rc = Rc::new(RefCell::new(data_slice));
 
         // 1. Test creation
         let map_result = SmallMemoryMap::new(data_rc.clone(), 0);
-        assert!(map_result.is_ok(), "Should create map with sufficient memory");
+        assert!(
+            map_result.is_ok(),
+            "Should create map with sufficient memory"
+        );
 
         // 2. Test insufficient memory at creation
         let bad_map = SmallMemoryMap::new(data_rc.clone(), required_size * 2 - 10);
