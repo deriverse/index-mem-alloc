@@ -2,19 +2,19 @@ use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
 use std::cell::RefMut;
 
-/// Standard memory map implementation (3 levels, 64 bits at first level)
-pub struct StandardMemoryMap<'a> {
+/// Max memory map implementation (3 levels, 64 bits at first level)
+pub struct MaxMemoryMap<'a> {
     memory: RefMut<'a, &'a mut [u8]>,
     offset: usize,
 }
 
-impl<'a> StandardMemoryMap<'a> {
-    /// Create a new standard memory map
+impl<'a> MaxMemoryMap<'a> {
+    /// Create a new Max memory map
     pub(crate) fn new(
         memory: RefMut<'a, &'a mut [u8]>,
         offset: usize,
     ) -> Result<Self, MemoryMapError> {
-        // Calculate required memory size for standard map:
+        // Calculate required memory size for max map:
         // - First level: 1 word to track available blocks in level 2
         // - Second level: 64 words (one per bit in first level)
         // - Third level: 64*64 words (one per bit in second level)
@@ -77,7 +77,7 @@ impl<'a> StandardMemoryMap<'a> {
         // constructor
         let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
 
-        // Standard memory map - 3 levels
+        // max memory map - 3 levels
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
         let second_idx = 1 + first as usize;
@@ -103,8 +103,8 @@ mod tests {
     use std::{cell::RefCell, mem::size_of};
 
     #[test]
-    fn test_standard_memory_map_functionality() {
-        // Calculate required memory size for standard map
+    fn test_max_memory_map_functionality() {
+        // Calculate required memory size for max map
         let required_size = (1 + 64 + 64 * 64) * size_of::<u64>();
 
         // Create memory buffer
@@ -125,7 +125,7 @@ mod tests {
         // --------- Test 1: Basic Creation -----------
         {
             let memory = data_ref_cell.borrow_mut();
-            let map_result = StandardMemoryMap::new(memory, 0);
+            let map_result = MaxMemoryMap::new(memory, 0);
             assert!(
                 map_result.is_ok(),
                 "Should create map with sufficient memory"
@@ -135,7 +135,7 @@ mod tests {
         // --------- Test 2: Insufficient Memory -----------
         {
             let memory = data_ref_cell.borrow_mut();
-            let map_result = StandardMemoryMap::new(memory, required_size * 2 - 10);
+            let map_result = MaxMemoryMap::new(memory, required_size * 2 - 10);
             assert!(
                 matches!(map_result, Err(MemoryMapError::InsufficientMemory)),
                 "Should fail with insufficient memory"
@@ -148,7 +148,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // First allocation should return 0
             let index1 = map.alloc();
@@ -162,7 +162,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Allocate 5 indices
             let mut indices = Vec::new();
@@ -186,7 +186,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Allocate 3 indices
             let index1 = map.alloc().unwrap();
@@ -217,7 +217,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Try to deallocate an invalid index
             let invalid_index = 1_000_000; // Way beyond our capacity
@@ -234,7 +234,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Allocate 10 indices
             let mut indices = Vec::new();
@@ -265,7 +265,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Allocate and track indices
             let mut all_indices = Vec::new();
@@ -328,7 +328,7 @@ mod tests {
             let unaligned_ref_cell = RefCell::new(unaligned_slice);
 
             let memory = unaligned_ref_cell.borrow_mut();
-            let map_result = StandardMemoryMap::new(memory, 0);
+            let map_result = MaxMemoryMap::new(memory, 0);
 
             // Should fail with alignment error if constructor checks alignment
             // Note: Our current implementation may not explicitly check this
@@ -346,7 +346,7 @@ mod tests {
             data_ref_cell.borrow_mut().fill(0);
 
             let memory = data_ref_cell.borrow_mut();
-            let mut map = StandardMemoryMap::new(memory, 0).unwrap();
+            let mut map = MaxMemoryMap::new(memory, 0).unwrap();
 
             // Maximum theoretical capacity (first level 64 bits * second level 64 bits *
             // third level 64 bits)
@@ -379,7 +379,7 @@ mod tests {
             );
 
             // Now deallocate a random subset
-            let mut rng = std::collections::hash_map::DefaultHasher::new();
+            let rng = std::collections::hash_map::DefaultHasher::new();
             let to_deallocate: Vec<_> = allocated
                 .iter()
                 .enumerate()
@@ -426,7 +426,7 @@ mod tests {
             let index1;
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map1 = StandardMemoryMap::new(memory, 0).unwrap();
+                let mut map1 = MaxMemoryMap::new(memory, 0).unwrap();
                 index1 = map1.alloc().unwrap();
                 assert_eq!(index1, 0, "First allocation in map1 should be 0");
                 // map1 is dropped here, releasing the borrow
@@ -436,7 +436,7 @@ mod tests {
             let index2;
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map2 = StandardMemoryMap::new(memory, single_map_size).unwrap();
+                let mut map2 = MaxMemoryMap::new(memory, single_map_size).unwrap();
                 index2 = map2.alloc().unwrap();
                 assert_eq!(index2, 0, "First allocation in map2 should be 0");
                 // map2 is dropped here, releasing the borrow
@@ -445,7 +445,7 @@ mod tests {
             // Step 3: Allocate again from first region
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map1 = StandardMemoryMap::new(memory, 0).unwrap();
+                let mut map1 = MaxMemoryMap::new(memory, 0).unwrap();
                 let index1_2 = map1.alloc().unwrap();
                 assert_eq!(index1_2, 1, "Second allocation in map1 should be 1");
                 // map1 is dropped here, releasing the borrow
@@ -454,7 +454,7 @@ mod tests {
             // Step 4: Allocate again from second region
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map2 = StandardMemoryMap::new(memory, single_map_size).unwrap();
+                let mut map2 = MaxMemoryMap::new(memory, single_map_size).unwrap();
                 let index2_2 = map2.alloc().unwrap();
                 assert_eq!(index2_2, 1, "Second allocation in map2 should be 1");
                 // map2 is dropped here, releasing the borrow
@@ -463,7 +463,7 @@ mod tests {
             // Step 5: Deallocate from first region, then drop the map
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map1 = StandardMemoryMap::new(memory, 0).unwrap();
+                let mut map1 = MaxMemoryMap::new(memory, 0).unwrap();
                 map1.dealloc(index1).unwrap();
                 // map1 is dropped here, releasing the borrow
             }
@@ -471,7 +471,7 @@ mod tests {
             // Step 6: Allocate again from both regions to verify independence
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map1 = StandardMemoryMap::new(memory, 0).unwrap();
+                let mut map1 = MaxMemoryMap::new(memory, 0).unwrap();
                 let index1_3 = map1.alloc().unwrap();
                 assert_eq!(index1_3, index1, "Map1 should reuse deallocated index");
                 // map1 is dropped here, releasing the borrow
@@ -479,7 +479,7 @@ mod tests {
 
             {
                 let memory = data_ref_cell.borrow_mut();
-                let mut map2 = StandardMemoryMap::new(memory, single_map_size).unwrap();
+                let mut map2 = MaxMemoryMap::new(memory, single_map_size).unwrap();
                 let index2_3 = map2.alloc().unwrap();
                 assert_eq!(index2_3, 2, "Map2 should allocate next sequential index");
                 // map2 is dropped here, releasing the borrow

@@ -2,19 +2,19 @@ use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
 use bytemuck::cast_slice_mut;
 use std::cell::RefMut;
 
-/// Trade memory map implementation (3 levels, 4 bits at first level)
-pub struct TradeMemoryMap<'a> {
+/// Standard memory map implementation (3 levels, 4 bits at first level)
+pub struct StandardMemoryMap<'a> {
     memory: RefMut<'a, &'a mut [u8]>,
     offset: usize,
 }
 
-impl<'a> TradeMemoryMap<'a> {
-    /// Create a new trade memory map
+impl<'a> StandardMemoryMap<'a> {
+    /// Create a new standard memory map
     pub(crate) fn new(
         memory: RefMut<'a, &'a mut [u8]>,
         offset: usize,
     ) -> Result<Self, MemoryMapError> {
-        // Calculate required memory size for trade map:
+        // Calculate required memory size for standard map:
         // - First level: 1 word to track available blocks in level 2
         // - Second level: 4 words (one per bit in first level)
         // - Third level: 4*64 words (one per bit in second level)
@@ -77,7 +77,7 @@ impl<'a> TradeMemoryMap<'a> {
         // constructor
         let u64_slice = cast_slice_mut::<u8, u64>(&mut self.memory[self.offset..]);
 
-        // Trade memory map - 3 levels
+        // standard memory map - 3 levels
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
         let second_idx = 1 + first as usize;
