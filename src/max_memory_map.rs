@@ -107,13 +107,13 @@ impl<'a> MaxMemoryMap<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::{cell::RefCell, mem::size_of, rc::Rc};
 
     // Helper function to create a properly aligned memory buffer wrapped in
     // Rc<RefCell> Returns the buffer and its required size
-    fn create_test_memory() -> (Rc<RefCell<&'static mut [u8]>>, usize) {
+    pub(crate) fn create_test_memory() -> (Rc<RefCell<&'static mut [u8]>>, usize) {
         // Calculate required memory size for max map
         let required_size = (1 + 64 + 64 * 64) * size_of::<u64>();
 

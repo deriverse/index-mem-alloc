@@ -105,3 +105,92 @@ impl<'a> StandardMemoryMap<'a> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, mem::size_of, rc::Rc};
+
+    #[test]
+    fn test_standard_map_basic_operations() {
+        // Create memory with sufficient size for StandardMemoryMap
+        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let mut data = vec![0u8; required_size * 2];
+
+        // Ensure proper alignment
+        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
+        if alignment_offset > 0 {
+            data = vec![0u8; required_size * 2 + alignment_offset];
+        }
+
+        // SAFETY: This is safe in tests since the data lives for the entire test duration
+        let data_ptr = Box::leak(data.into_boxed_slice());
+        let data_slice = &mut data_ptr[alignment_offset..];
+        let data_rc = Rc::new(RefCell::new(data_slice));
+
+        // Test creation and basic memory allocation
+        let map_result = StandardMemoryMap::new(data_rc.clone(), 0);
+        assert!(map_result.is_ok(), "Should create map with sufficient memory");
+
+        // Test insufficient memory error
+        let bad_map = StandardMemoryMap::new(data_rc.clone(), required_size * 2 - 10);
+        assert!(
+            matches!(bad_map, Err(MemoryMapError::InsufficientMemory)),
+            "Should fail with insufficient memory"
+        );
+    }
+
+    #[test]
+    fn test_standard_map_level_transitions() {
+        // Create memory with sufficient size for level transitions
+        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let mut data = vec![0u8; required_size * 2];
+
+        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
+        if alignment_offset > 0 {
+            data = vec![0u8; required_size * 2 + alignment_offset];
+        }
+
+        let data_ptr = Box::leak(data.into_boxed_slice());
+        let data_slice = &mut data_ptr[alignment_offset..];
+        let data_rc = Rc::new(RefCell::new(data_slice));
+
+        data_rc.borrow_mut().fill(0);
+        let mut map = StandardMemoryMap::new(data_rc.clone(), 0).unwrap();
+
+        // Allocate indices to cross level boundaries
+        let mut all_indices = Vec::new();
+        for _ in 0..150 {
+            match map.alloc() {
+                Ok(idx) => all_indices.push(idx),
+                Err(_) => break,
+            }
+        }
+
+        // Verify level transition patterns (specific to StandardMemoryMap)
+        if all_indices.len() > 64 {
+            // Check first block (first=0, second=0..63)
+            for i in 0..64 {
+                assert_eq!(
+                    all_indices[i] >> 12,
+                    0,
+                    "First 64 indices should use first-level bit 0"
+                );
+                assert_eq!(
+                    (all_indices[i] >> 6) & 0x3F,
+                    0,
+                    "First 64 indices should use second-level bit 0"
+                );
+            }
+
+            // Check transition to next second-level bit
+            if all_indices.len() > 64 {
+                assert_eq!(
+                    (all_indices[64] >> 6) & 0x3F,
+                    1,
+                    "65th index should use second-level bit 1"
+                );
+            }
+        }
+    }
+}
