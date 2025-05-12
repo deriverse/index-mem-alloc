@@ -7,13 +7,15 @@ use crate::{
     max_memory_map::MaxMemoryMap, small_memory_map::SmallMemoryMap,
     trade_memory_map::StandardMemoryMap,
 };
-use std::{cell::RefCell, mem::align_of, rc::Rc};
+use solana_program::account_info::AccountInfo;
+use std::{
+    mem::{align_of, size_of},
+    ptr::NonNull,
+};
 
 /// Error types that can occur during memory map operations
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryMapError {
-    CantBorrowMemory,
-    CantBorrowMutMemory,
     InvalidOffset,
     NoAvailableSlots,
     AlignmentError,
@@ -21,6 +23,7 @@ pub enum MemoryMapError {
     InvalidIndex,
     IndexOutOfBounds,
     InvalidMapType,
+    NullPointer,
 }
 
 /// Available memory map types
@@ -36,48 +39,62 @@ pub enum MapType {
 
 /// Memory map implementations
 #[derive(Clone)]
-pub enum MemoryMap<'a> {
+pub enum MemoryMap {
     /// 3-level memory map with 64 bits in first level
-    Max(MaxMemoryMap<'a>),
+    Max(MaxMemoryMap),
     /// 3-level memory map with 4 bits in first level
-    Standard(StandardMemoryMap<'a>),
+    Standard(StandardMemoryMap),
     /// 2-level memory map
-    Small(SmallMemoryMap<'a>),
+    Small(SmallMemoryMap),
 }
 
-impl<'a> MemoryMap<'a> {
-    /// Create a new memory map
+impl MemoryMap {
+    /// Create a new memory map from AccountInfo
+    ///
+    /// # Safety
+    /// This is safe in Solana context where:
+    /// - Programs are single-threaded
+    /// - AccountInfo lives for the entire process_instruction call
+    /// - There's no concurrent access to the data
     pub fn new(
-        memory: Rc<RefCell<&'a mut [u8]>>,
+        account: &AccountInfo,
         offset: usize,
         map_type: MapType,
     ) -> Result<Self, MemoryMapError> {
-        {
-            let memory_ref = memory
-                .try_borrow()
-                .map_err(|_| MemoryMapError::CantBorrowMemory)?;
-            // Check offset validity
-            if offset >= memory_ref.len() {
-                return Err(MemoryMapError::InvalidOffset);
-            }
+        let mut data = account.data.borrow_mut();
+        Self::new_from_slice(&mut data, offset, map_type)
+    }
 
-            // Check alignment for u64
-            if (memory_ref.as_ptr() as usize + offset) % align_of::<u64>() != 0 {
-                return Err(MemoryMapError::AlignmentError);
-            }
+    /// Create a new memory map from mutable byte slice
+    pub fn new_from_slice(
+        data: &mut [u8],
+        offset: usize,
+        map_type: MapType,
+    ) -> Result<Self, MemoryMapError> {
+        // Check offset validity
+        if offset >= data.len() {
+            return Err(MemoryMapError::InvalidOffset);
         }
 
+        // Check alignment for u64
+        let ptr = data[offset..].as_mut_ptr();
+        if (ptr as usize) % align_of::<u64>() != 0 {
+            return Err(MemoryMapError::AlignmentError);
+        }
+
+        // Create NonNull pointer - guaranteed to be non-null
+        let memory = NonNull::new(ptr).ok_or(MemoryMapError::NullPointer)?;
+
+        let remaining_size = data.len() - offset;
+
         // Create the appropriate memory map implementation
-        // The inner constructors use `memory.borrow()` which is safe here because:
-        // - We've already verified the memory can be borrowed with try_borrow() above
-        // - Solana programs run in a single-threaded environment
         match map_type {
-            MapType::Max => Ok(Self::Max(MaxMemoryMap::new(memory.clone(), offset)?)),
+            MapType::Max => Ok(Self::Max(MaxMemoryMap::new(memory, remaining_size)?)),
             MapType::Standard => Ok(Self::Standard(StandardMemoryMap::new(
-                memory.clone(),
-                offset,
+                memory,
+                remaining_size,
             )?)),
-            MapType::Small => Ok(Self::Small(SmallMemoryMap::new(memory.clone(), offset)?)),
+            MapType::Small => Ok(Self::Small(SmallMemoryMap::new(memory, remaining_size)?)),
         }
     }
 
@@ -100,129 +117,105 @@ impl<'a> MemoryMap<'a> {
     }
 }
 
+/// Helper function to get mutable u64 at specified index
+#[inline]
+pub(crate) fn get_u64_mut<'a>(
+    memory: NonNull<u8>,
+    size: usize,
+    index: usize,
+) -> Result<&'a mut u64, MemoryMapError> {
+    if index * size_of::<u64>() >= size {
+        return Err(MemoryMapError::IndexOutOfBounds);
+    }
+
+    unsafe {
+        let ptr = memory.as_ptr().add(index * size_of::<u64>()) as *mut u64;
+        Ok(&mut *ptr)
+    }
+}
+
+/// Helper function to get u64 at specified index
+#[inline]
+pub(crate) fn get_u64<'a>(
+    memory: NonNull<u8>,
+    size: usize,
+    index: usize,
+) -> Result<&'a u64, MemoryMapError> {
+    if index * size_of::<u64>() >= size {
+        return Err(MemoryMapError::IndexOutOfBounds);
+    }
+
+    unsafe {
+        let ptr = memory.as_ptr().add(index * size_of::<u64>()) as *const u64;
+        Ok(&*ptr)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn create_aligned_memory(size: usize) -> (Vec<u8>, NonNull<u8>) {
+    let mut data = vec![0u8; size + 8]; // Add extra space for alignment
+
+    // Ensure proper alignment
+    let ptr = data.as_ptr();
+    let misalignment = ptr as usize % 8;
+    if misalignment != 0 {
+        data.rotate_left(8 - misalignment);
+    }
+
+    let ptr = data.as_mut_ptr();
+    // Safety: We just created this vector and it's properly aligned
+    let non_null_ptr = NonNull::new(ptr).expect("Vector pointer should not be null");
+
+    (data, non_null_ptr)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, mem::size_of, rc::Rc};
 
-    // Create aligned memory buffer for testing
-    fn create_aligned_buffer(size: usize) -> Rc<RefCell<&'static mut [u8]>> {
-        // Create a buffer large enough for any type of map
-        let required_size = (1 + 64 + 64 * 64) * size_of::<u64>(); // Size for Max map
-        let size = if size < required_size {
-            required_size
-        } else {
-            size
-        };
-
-        let data = vec![0u8; size + 16]; // Add extra space for alignment
-
-        // Ensure 8-byte alignment
+    fn create_aligned_buffer(size: usize) -> Vec<u8> {
+        let mut data = vec![0u8; size + 8];
         let ptr = data.as_ptr();
         let misalignment = ptr as usize % 8;
-        let alignment_offset = if misalignment == 0 {
-            0
-        } else {
-            8 - misalignment
-        };
-
-        // SAFETY: This is safe in tests since the data lives for the entire test
-        // duration
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let aligned_slice = &mut data_ptr[alignment_offset..];
-
-        // Verify alignment
-        assert_eq!(
-            (aligned_slice.as_ptr() as usize) % 8,
-            0,
-            "Buffer should be 8-byte aligned"
-        );
-
-        Rc::new(RefCell::new(aligned_slice))
-    }
-
-    // Create unaligned memory buffer for testing
-    fn create_unaligned_buffer(size: usize) -> Rc<RefCell<&'static mut [u8]>> {
-        // Create a buffer with unaligned address
-        let data = vec![0u8; size + 16]; // Add extra space for alignment manipulation
-
-        // Ensure we start with aligned memory, then offset by 1
-        let ptr = data.as_ptr();
-        let misalignment = ptr as usize % 8;
-        let alignment_offset = if misalignment == 0 {
-            1
-        } else {
-            9 - misalignment
-        };
-
-        // SAFETY: This is safe in tests since the data lives for the entire test
-        // duration
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let unaligned_slice = &mut data_ptr[alignment_offset..];
-
-        // Verify unalignment
-        assert_ne!(
-            (unaligned_slice.as_ptr() as usize) % 8,
-            0,
-            "Buffer should not be 8-byte aligned"
-        );
-
-        Rc::new(RefCell::new(unaligned_slice))
+        if misalignment != 0 {
+            data.rotate_left(8 - misalignment);
+        }
+        data
     }
 
     #[test]
-    fn test_memory_map_alignment() {
-        // Create buffers with sufficient size for any memory map
-        let aligned_rc = create_aligned_buffer(10000);
-        let unaligned_rc = create_unaligned_buffer(10000);
+    fn test_memory_map_creation() {
+        let mut buffer = create_aligned_buffer(1024);
 
-        // Double-check our test setup
-        {
-            let aligned_ref = aligned_rc.borrow();
-            let unaligned_ref = unaligned_rc.borrow();
+        // Test successful creation
+        let result = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small);
+        assert!(result.is_ok());
 
-            // Print diagnostic info
-            println!(
-                "Aligned buffer address: {:p}, aligned? {}",
-                aligned_ref.as_ptr(),
-                (aligned_ref.as_ptr() as usize) % 8 == 0
-            );
+        // Test alignment error
+        let unaligned_result = MemoryMap::new_from_slice(&mut buffer, 1, MapType::Small);
+        assert!(matches!(
+            unaligned_result,
+            Err(MemoryMapError::AlignmentError)
+        ));
 
-            println!(
-                "Unaligned buffer address: {:p}, aligned? {}",
-                unaligned_ref.as_ptr(),
-                (unaligned_ref.as_ptr() as usize) % 8 == 0
-            );
+        // Test invalid offset
+        let invalid_result = MemoryMap::new_from_slice(&mut buffer, 2048, MapType::Small);
+        assert!(matches!(invalid_result, Err(MemoryMapError::InvalidOffset)));
+    }
 
-            // Verify buffer lengths are sufficient
-            println!("Aligned buffer length: {}", aligned_ref.len());
-            println!("Unaligned buffer length: {}", unaligned_ref.len());
-        }
+    #[test]
+    fn test_memory_map_operations() {
+        let mut buffer = create_aligned_buffer(512);
+        let mut map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
 
-        // Test 1: Aligned memory should work fine with Small map type (smallest
-        // requirements)
-        let aligned_result = MemoryMap::new(aligned_rc.clone(), 0, MapType::Small);
-        if let Err(err) = &aligned_result {
-            println!("Failed to create map with aligned memory: {:?}", err);
-        }
-        assert!(
-            aligned_result.is_ok(),
-            "MemoryMap creation should succeed with aligned memory"
-        );
+        // Test allocation
+        let idx1 = map.alloc().unwrap();
+        let idx2 = map.alloc().unwrap();
+        assert_ne!(idx1, idx2);
 
-        // Test 2: Unaligned memory should produce alignment error
-        let unaligned_result = MemoryMap::new(unaligned_rc.clone(), 0, MapType::Small);
-        assert!(
-            matches!(unaligned_result, Err(MemoryMapError::AlignmentError)),
-            "MemoryMap::new should fail with alignment error for unaligned memory"
-        );
-
-        // Test 3: Even with aligned memory, an unaligned offset should fail
-        let unaligned_offset = 1; // This should make the effective address unaligned
-        let offset_result = MemoryMap::new(aligned_rc.clone(), unaligned_offset, MapType::Small);
-        assert!(
-            matches!(offset_result, Err(MemoryMapError::AlignmentError)),
-            "MemoryMap::new should fail with alignment error for unaligned offset"
-        );
+        // Test deallocation and reuse
+        map.dealloc(idx1).unwrap();
+        let idx3 = map.alloc().unwrap();
+        assert_eq!(idx1, idx3);
     }
 }

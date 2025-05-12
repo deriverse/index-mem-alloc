@@ -1,20 +1,16 @@
-use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
-use bytemuck::cast_slice_mut;
-use std::{cell::RefCell, rc::Rc};
+use crate::{get_first_zero_bit::get_first_zero_bit, get_u64, get_u64_mut, MemoryMapError};
+use std::{mem::size_of, ptr::NonNull};
 
 /// Standard memory map implementation (3 levels, 4 bits at first level)
 #[derive(Clone)]
-pub struct StandardMemoryMap<'a> {
-    memory: Rc<RefCell<&'a mut [u8]>>,
-    offset: usize,
+pub struct StandardMemoryMap {
+    memory: NonNull<u8>,
+    size: usize,
 }
 
-impl<'a> StandardMemoryMap<'a> {
+impl StandardMemoryMap {
     /// Create a new standard memory map
-    pub(crate) fn new(
-        memory: Rc<RefCell<&'a mut [u8]>>,
-        offset: usize,
-    ) -> Result<Self, MemoryMapError> {
+    pub(crate) fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for standard map:
         // - First level: 1 word to track available blocks in level 2
         // - Second level: 4 words (one per bit in first level)
@@ -22,51 +18,40 @@ impl<'a> StandardMemoryMap<'a> {
         let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
 
         // Check if there's enough memory
-        {
-            let memory_ref = memory.borrow();
-            if memory_ref.len() - offset < required_size {
-                return Err(MemoryMapError::InsufficientMemory);
-            }
+        if size < required_size {
+            return Err(MemoryMapError::InsufficientMemory);
         }
 
-        Ok(Self { memory, offset })
+        Ok(Self { memory, size })
     }
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-        // Safe to use `cast_slice_mut` because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
-
         // First level allocation (4 bits)
-        let first = get_first_zero_bit(u64_slice[0], 4)?;
+        let first_word = get_u64(self.memory, self.size, 0)?;
+        let first = get_first_zero_bit(*first_word, 4)?;
 
         // Second level allocation
         let second_idx = 1 + first;
-        if second_idx >= u64_slice.len() {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
-
-        let second = get_first_zero_bit(u64_slice[second_idx], 64)?;
+        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second = get_first_zero_bit(*second_word, 64)?;
 
         // Third level allocation
         let third_idx = 5 + (first * 64) + second;
-        if third_idx >= u64_slice.len() {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
-
-        let third = get_first_zero_bit(u64_slice[third_idx], 64)?;
+        let third_word = get_u64(self.memory, self.size, third_idx)?;
+        let third = get_first_zero_bit(*third_word, 64)?;
 
         // Mark as allocated
-        u64_slice[third_idx] |= 1 << third;
-        if u64_slice[third_idx] == u64::MAX {
-            u64_slice[second_idx] |= 1 << second;
-            if u64_slice[second_idx] == u64::MAX {
-                u64_slice[0] |= 1 << first;
+        let third_word_mut = get_u64_mut(self.memory, self.size, third_idx)?;
+        *third_word_mut |= 1 << third;
+
+        if *third_word_mut == u64::MAX {
+            let second_word_mut = get_u64_mut(self.memory, self.size, second_idx)?;
+            *second_word_mut |= 1 << second;
+
+            if *second_word_mut == u64::MAX {
+                let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+                *first_word_mut |= 1 << first;
             }
         }
 
@@ -80,30 +65,22 @@ impl<'a> StandardMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-
-        // Safe to use cast_slice_mut because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // standard memory map - 3 levels
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
-        let second_idx = 1 + first as usize;
-        let third_idx = 5 + (index >> 6) as usize;
-
-        // Validate array bounds before access
-        if third_idx >= u64_slice.len() || second_idx >= u64_slice.len() {
-            return Err(MemoryMapError::IndexOutOfBounds);
-        }
+        let second_idx = 1 + first;
+        let third_idx = 5 + (index >> 6);
 
         // Clear allocation bits
-        u64_slice[third_idx] &= u64::MAX - (1 << (index & 0x3f));
-        u64_slice[second_idx] &= u64::MAX - (1 << second);
-        u64_slice[0] &= u64::MAX - (1 << first);
+        let third_word = get_u64_mut(self.memory, self.size, third_idx)?;
+        *third_word &= !(1 << (index & 0x3f));
+
+        let second_word = get_u64_mut(self.memory, self.size, second_idx)?;
+        *second_word &= !(1 << second);
+
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word &= !(1 << first);
 
         Ok(())
     }
@@ -112,35 +89,24 @@ impl<'a> StandardMemoryMap<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, mem::size_of, rc::Rc};
+    use crate::create_aligned_memory;
 
     #[test]
     fn test_standard_map_basic_operations() {
         // Create memory with sufficient size for StandardMemoryMap
         let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
-        let mut data = vec![0u8; required_size * 2];
-
-        // Ensure proper alignment
-        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
-        if alignment_offset > 0 {
-            data = vec![0u8; required_size * 2 + alignment_offset];
-        }
-
-        // SAFETY: This is safe in tests since the data lives for the entire test
-        // duration
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let data_slice = &mut data_ptr[alignment_offset..];
-        let data_rc = Rc::new(RefCell::new(data_slice));
+        let (data, ptr) = create_aligned_memory(required_size * 2);
 
         // Test creation and basic memory allocation
-        let map_result = StandardMemoryMap::new(data_rc.clone(), 0);
+        let map_result = StandardMemoryMap::new(ptr, data.len());
         assert!(
             map_result.is_ok(),
             "Should create map with sufficient memory"
         );
 
         // Test insufficient memory error
-        let bad_map = StandardMemoryMap::new(data_rc.clone(), required_size * 2 - 10);
+        let (_small_data, small_ptr) = create_aligned_memory(10);
+        let bad_map = StandardMemoryMap::new(small_ptr, 10);
         assert!(
             matches!(bad_map, Err(MemoryMapError::InsufficientMemory)),
             "Should fail with insufficient memory"
@@ -151,19 +117,10 @@ mod tests {
     fn test_standard_map_level_transitions() {
         // Create memory with sufficient size for level transitions
         let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
-        let mut data = vec![0u8; required_size * 2];
+        let (mut data, ptr) = create_aligned_memory(required_size * 2);
 
-        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
-        if alignment_offset > 0 {
-            data = vec![0u8; required_size * 2 + alignment_offset];
-        }
-
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let data_slice = &mut data_ptr[alignment_offset..];
-        let data_rc = Rc::new(RefCell::new(data_slice));
-
-        data_rc.borrow_mut().fill(0);
-        let mut map = StandardMemoryMap::new(data_rc.clone(), 0).unwrap();
+        data.fill(0);
+        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate indices to cross level boundaries
         let mut all_indices = Vec::new();
@@ -199,5 +156,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_standard_map_allocation_and_deallocation() {
+        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+
+        data.fill(0);
+        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+
+        // Allocate several indices
+        let idx1 = map.alloc().unwrap();
+        let idx2 = map.alloc().unwrap();
+        let idx3 = map.alloc().unwrap();
+
+        assert_eq!(idx1, 0);
+        assert_eq!(idx2, 1);
+        assert_eq!(idx3, 2);
+
+        // Deallocate middle index
+        map.dealloc(idx2).unwrap();
+
+        // Should reuse the deallocated index
+        let idx4 = map.alloc().unwrap();
+        assert_eq!(idx4, idx2);
+
+        // Test invalid index deallocation
+        let result = map.dealloc(20000);
+        assert!(matches!(result, Err(MemoryMapError::InvalidIndex)));
+    }
+
+    #[test]
+    fn test_standard_map_capacity() {
+        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+
+        data.fill(0);
+        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+
+        // StandardMemoryMap with 4 bits at first level can allocate up to 4 * 64 * 64 =
+        // 16384 indices Let's allocate a reasonable subset to test
+        let mut allocated = Vec::new();
+        for _ in 0..1000 {
+            match map.alloc() {
+                Ok(idx) => allocated.push(idx),
+                Err(_) => break,
+            }
+        }
+
+        assert!(
+            allocated.len() >= 1000,
+            "Should be able to allocate at least 1000 indices"
+        );
+
+        // Deallocate all
+        for idx in allocated {
+            map.dealloc(idx).unwrap();
+        }
+
+        // Should be able to allocate again
+        let idx = map.alloc().unwrap();
+        assert_eq!(idx, 0, "After deallocating all, should start from 0");
     }
 }

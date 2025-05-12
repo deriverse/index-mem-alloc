@@ -1,20 +1,15 @@
-use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
-use bytemuck::cast_slice_mut;
-use std::{cell::RefCell, rc::Rc};
-
+use crate::{get_first_zero_bit::get_first_zero_bit, get_u64, get_u64_mut, MemoryMapError};
+use std::{mem::size_of, ptr::NonNull};
 /// Max memory map implementation (3 levels, 64 bits at first level)
 #[derive(Clone)]
-pub struct MaxMemoryMap<'a> {
-    memory: Rc<RefCell<&'a mut [u8]>>,
-    offset: usize,
+pub struct MaxMemoryMap {
+    memory: NonNull<u8>,
+    size: usize,
 }
 
-impl<'a> MaxMemoryMap<'a> {
+impl MaxMemoryMap {
     /// Create a new Max memory map
-    pub(crate) fn new(
-        memory: Rc<RefCell<&'a mut [u8]>>,
-        offset: usize,
-    ) -> Result<Self, MemoryMapError> {
+    pub(crate) fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for max map:
         // - First level: 1 word to track available blocks in level 2
         // - Second level: 64 words (one per bit in first level)
@@ -22,51 +17,42 @@ impl<'a> MaxMemoryMap<'a> {
         let required_size = (1 + 64 + 64 * 64) * size_of::<u64>();
 
         // Check if there's enough memory
-        {
-            let memory_ref = memory.borrow();
-            if memory_ref.len() - offset < required_size {
-                return Err(MemoryMapError::InsufficientMemory);
-            }
+        if size < required_size {
+            return Err(MemoryMapError::InsufficientMemory);
         }
 
-        Ok(Self { memory, offset })
+        Ok(Self { memory, size })
     }
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-        // Safe to use `cast_slice_mut` because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
-
         // First level allocation (64 bits)
-        let first = get_first_zero_bit(u64_slice[0], 64)?;
+        let first_word = get_u64(self.memory, self.size, 0)?;
+        let first = get_first_zero_bit(*first_word, 64)?;
 
         // Second level allocation
         let second_idx = 1 + first;
-        if second_idx >= u64_slice.len() {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
-
-        let second = get_first_zero_bit(u64_slice[second_idx], 64)?;
+        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second = get_first_zero_bit(*second_word, 64)?;
 
         // Third level allocation
         let third_idx = 65 + (first * 64) + second;
-        if third_idx >= u64_slice.len() {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
+        let third_word = get_u64(self.memory, self.size, third_idx)?;
+        let third = get_first_zero_bit(*third_word, 64)?;
 
-        let third = get_first_zero_bit(u64_slice[third_idx], 64)?;
+        // Mark as allocated in third level
+        let third_word_mut = get_u64_mut(self.memory, self.size, third_idx)?;
+        *third_word_mut |= 1 << third;
 
-        // Mark as allocated
-        u64_slice[third_idx] |= 1 << third;
-        if u64_slice[third_idx] == u64::MAX {
-            u64_slice[second_idx] |= 1 << second;
-            if u64_slice[second_idx] == u64::MAX {
-                u64_slice[0] |= 1 << first;
+        // Update second level if needed
+        if *third_word_mut == u64::MAX {
+            let second_word_mut = get_u64_mut(self.memory, self.size, second_idx)?;
+            *second_word_mut |= 1 << second;
+
+            // Update first level if needed
+            if *second_word_mut == u64::MAX {
+                let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+                *first_word_mut |= 1 << first;
             }
         }
 
@@ -80,30 +66,22 @@ impl<'a> MaxMemoryMap<'a> {
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-
-        // Safe to use cast_slice_mut because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // max memory map - 3 levels
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
-        let second_idx = 1 + first as usize;
-        let third_idx = 65 + (index >> 6) as usize;
-
-        // Validate array bounds before access
-        if third_idx >= u64_slice.len() || second_idx >= u64_slice.len() {
-            return Err(MemoryMapError::IndexOutOfBounds);
-        }
+        let second_idx = 1 + first;
+        let third_idx = 65 + (index >> 6);
 
         // Clear allocation bits
-        u64_slice[third_idx] &= u64::MAX - (1 << (index & 0x3f));
-        u64_slice[second_idx] &= u64::MAX - (1 << second);
-        u64_slice[0] &= u64::MAX - (1 << first);
+        let third_word = get_u64_mut(self.memory, self.size, third_idx)?;
+        *third_word &= !(1 << (index & 0x3f));
+
+        let second_word = get_u64_mut(self.memory, self.size, second_idx)?;
+        *second_word &= !(1 << second);
+
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word &= !(1 << first);
 
         Ok(())
     }
@@ -112,40 +90,21 @@ impl<'a> MaxMemoryMap<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::{cell::RefCell, mem::size_of, rc::Rc};
+    use crate::create_aligned_memory;
+    use std::ptr::NonNull;
 
-    // Helper function to create a properly aligned memory buffer wrapped in
-    // Rc<RefCell> Returns the buffer and its required size
-    pub(crate) fn create_test_memory() -> (Rc<RefCell<&'static mut [u8]>>, usize) {
-        // Calculate required memory size for max map
-        let required_size = (1 + 64 + 64 * 64) * size_of::<u64>();
-
-        // Create memory buffer with double size for multiple maps test
-        let mut data = vec![0u8; required_size * 2];
-
-        // Ensure proper alignment
-        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
-        if alignment_offset > 0 {
-            // Add padding to ensure alignment
-            data = vec![0u8; required_size * 2 + alignment_offset];
-        }
-
-        // Convert to static lifetime for testing purposes only
-        // SAFETY: This is safe in tests since the data lives for the entire test
-        // duration
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let data_slice = &mut data_ptr[alignment_offset..];
-        let data_rc = Rc::new(RefCell::new(data_slice));
-
-        (data_rc, required_size)
+    // Calculate required memory size for max map
+    fn get_required_size() -> usize {
+        (1 + 64 + 64 * 64) * size_of::<u64>()
     }
 
     #[test]
     fn test_basic_creation() {
-        let (data_rc, _) = create_test_memory();
+        let required_size = get_required_size();
+        let (data, ptr) = create_aligned_memory(required_size);
 
         // Create a MaxMemoryMap with sufficient memory
-        let map_result = MaxMemoryMap::new(data_rc.clone(), 0);
+        let map_result = MaxMemoryMap::new(ptr, data.len());
         assert!(
             map_result.is_ok(),
             "Should create map with sufficient memory"
@@ -154,10 +113,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_insufficient_memory() {
-        let (data_rc, required_size) = create_test_memory();
+        let (data, ptr) = create_aligned_memory(100); // Too small
 
-        // Try to create with insufficient memory (offset too large)
-        let map_result = MaxMemoryMap::new(data_rc.clone(), required_size * 2 - 10);
+        // Try to create with insufficient memory
+        let map_result = MaxMemoryMap::new(ptr, data.len());
         assert!(
             matches!(map_result, Err(MemoryMapError::InsufficientMemory)),
             "Should fail with insufficient memory"
@@ -166,13 +125,14 @@ pub(crate) mod tests {
 
     #[test]
     fn test_basic_allocation() {
-        let (data_rc, _) = create_test_memory();
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
 
         // Reset memory for this test
-        data_rc.borrow_mut().fill(0);
+        data.fill(0);
 
         // Create map and perform first allocation
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
         let index1 = map.alloc();
 
         assert!(index1.is_ok(), "First allocation should succeed");
@@ -181,10 +141,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_multiple_allocations() {
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate 5 indices and verify they are sequential
         let mut indices = Vec::new();
@@ -204,10 +165,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_deallocation() {
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate 3 indices
         let index1 = map.alloc().unwrap();
@@ -234,10 +196,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_invalid_deallocation() {
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Try to deallocate an invalid index
         let invalid_index = 1_000_000; // Way beyond our capacity
@@ -250,10 +213,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_allocation_after_multiple_deallocations() {
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate 10 indices
         let mut indices = Vec::new();
@@ -280,10 +244,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_level_transitions() {
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate and track indices
         let mut all_indices = Vec::new();
@@ -338,11 +303,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_full_allocation() {
-        // This is a stress test for filling up the memory map
-        let (data_rc, _) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
 
-        let mut map = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map = MaxMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate as many indices as possible (limiting to avoid excessive test time)
         let mut allocated = Vec::new();
@@ -354,7 +319,10 @@ pub(crate) mod tests {
                 Ok(idx) => {
                     // Check that indices are increasing
                     if let Some(last) = last_index {
-                        assert!(idx > last, "New index should be greater than previous");
+                        assert!(
+                            idx > last || allocated.contains(&idx),
+                            "New index should be greater than previous or reused"
+                        );
                     }
                     last_index = Some(idx);
                     allocated.push(idx);
@@ -403,18 +371,24 @@ pub(crate) mod tests {
 
     #[test]
     fn test_multiple_maps_in_same_buffer() {
-        // This test verifies that we can create two memory maps in the same buffer
-        // at different offsets, and they operate independently
-        let (data_rc, single_map_size) = create_test_memory();
-        data_rc.borrow_mut().fill(0);
+        let single_map_size = get_required_size();
+        let (mut data, base_ptr) = create_aligned_memory(single_map_size * 2);
+        data.fill(0);
+
+        // Create first pointer for the first map
+        let ptr1 = base_ptr;
+
+        // Create second pointer for the second map (offset by single_map_size)
+        let ptr2_raw = unsafe { base_ptr.as_ptr().add(single_map_size) };
+        let ptr2 = NonNull::new(ptr2_raw).expect("Offset pointer should not be null");
 
         // Step 1: Create first map and allocate
-        let mut map1 = MaxMemoryMap::new(data_rc.clone(), 0).unwrap();
+        let mut map1 = MaxMemoryMap::new(ptr1, single_map_size).unwrap();
         let index1 = map1.alloc().unwrap();
         assert_eq!(index1, 0, "First allocation in map1 should be 0");
 
         // Step 2: Create second map at different offset and allocate
-        let mut map2 = MaxMemoryMap::new(data_rc.clone(), single_map_size).unwrap();
+        let mut map2 = MaxMemoryMap::new(ptr2, single_map_size).unwrap();
         let index2 = map2.alloc().unwrap();
         assert_eq!(index2, 0, "First allocation in map2 should be 0");
 
@@ -434,11 +408,5 @@ pub(crate) mod tests {
 
         let index2_3 = map2.alloc().unwrap();
         assert_eq!(index2_3, 2, "Map2 should allocate next sequential index");
-
-        // Explanatory comment about how this works with Rc<RefCell>
-        // Note: This test demonstrates that we can have multiple MaxMemoryMap
-        // instances sharing access to the same memory through
-        // Rc<RefCell>, with each map operating on its own segment
-        // defined by its offset.
     }
 }

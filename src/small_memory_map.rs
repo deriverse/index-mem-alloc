@@ -1,94 +1,70 @@
-use crate::{MemoryMapError, get_first_zero_bit::get_first_zero_bit};
-use bytemuck::cast_slice_mut;
-use std::{cell::RefCell, rc::Rc};
+use crate::{get_first_zero_bit::get_first_zero_bit, get_u64, get_u64_mut, MemoryMapError};
+use std::{mem::size_of, ptr::NonNull};
 
 /// Small memory map implementation (2 levels)
 #[derive(Clone)]
-pub struct SmallMemoryMap<'a> {
-    memory: Rc<RefCell<&'a mut [u8]>>,
-    offset: usize,
+pub struct SmallMemoryMap {
+    memory: NonNull<u8>,
+    size: usize,
 }
 
-impl<'a> SmallMemoryMap<'a> {
+impl SmallMemoryMap {
     /// Create a new small memory map
-    pub(crate) fn new(
-        memory: Rc<RefCell<&'a mut [u8]>>,
-        offset: usize,
-    ) -> Result<Self, MemoryMapError> {
+    pub fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for small map:
         // - First level: 1 word to track available blocks in level 2
         // - Second level: 64 words (one per bit in first level)
         let required_size = (1 + 64) * size_of::<u64>();
 
         // Check if there's enough memory
-        {
-            let memory_ref = memory.borrow();
-            if memory_ref.len() - offset < required_size {
-                return Err(MemoryMapError::InsufficientMemory);
-            }
-        }
-
-        Ok(Self { memory, offset })
-    }
-
-    /// Allocate a new slot
-    pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-        // Safe to use `cast_slice_mut` because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
-
-        // First level allocation
-        let first = get_first_zero_bit(u64_slice[0], 64)?;
-
-        // Second level allocation
-        let second_idx = 1 + first;
-        if second_idx >= u64_slice.len() {
+        if size < required_size {
             return Err(MemoryMapError::InsufficientMemory);
         }
 
-        let second = get_first_zero_bit(u64_slice[second_idx], 64)?;
+        Ok(Self { memory, size })
+    }
+
+    /// Allocate a new slot
+    pub fn alloc(&mut self) -> Result<usize, MemoryMapError> {
+        // First level allocation
+        let first_word = get_u64(self.memory, self.size, 0)?;
+        let first = get_first_zero_bit(*first_word, 64)?;
+
+        // Second level allocation
+        let second_idx = 1 + first;
+        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second = get_first_zero_bit(*second_word, 64)?;
 
         // Mark as allocated
-        u64_slice[second_idx] |= 1 << second;
-        if u64_slice[second_idx] == u64::MAX {
-            u64_slice[0] |= 1 << first;
+        let second_word_mut = get_u64_mut(self.memory, self.size, second_idx)?;
+        *second_word_mut |= 1 << second;
+
+        if *second_word_mut == u64::MAX {
+            let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+            *first_word_mut |= 1 << first;
         }
 
         Ok((first << 6) + second)
     }
 
     /// Deallocate a previously allocated slot
-    pub(crate) fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
+    pub fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
         // Check upper bound
         let max_index = (64 << 6) - 1; // 4095
         if index > max_index {
             return Err(MemoryMapError::InvalidIndex);
         }
-        let mut memory = self
-            .memory
-            .try_borrow_mut()
-            .map_err(|_| MemoryMapError::CantBorrowMutMemory)?;
-
-        // Safe to use cast_slice_mut because we already checked alignment in the
-        // constructor
-        let u64_slice = cast_slice_mut::<u8, u64>(&mut memory[self.offset..]);
 
         // Small memory map - 2 levels
         let first = index >> 6;
-        let second_idx = 1 + first as usize;
-
-        // Validate array bounds before access
-        if second_idx >= u64_slice.len() {
-            return Err(MemoryMapError::IndexOutOfBounds);
-        }
+        let second_idx = 1 + first;
 
         // Clear allocation bits
-        u64_slice[second_idx] &= u64::MAX - (1 << (index & 0x3f));
-        u64_slice[0] &= u64::MAX - (1 << first);
+        let second_word = get_u64_mut(self.memory, self.size, second_idx)?;
+        *second_word &= !(1 << (index & 0x3f));
+
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word &= !(1 << first);
 
         Ok(())
     }
@@ -97,42 +73,31 @@ impl<'a> SmallMemoryMap<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, mem::size_of, rc::Rc};
+    use crate::create_aligned_memory;
+    use std::mem::size_of;
 
     #[test]
     fn test_small_map_basic_operations() {
         let required_size = (1 + 64) * size_of::<u64>();
-        let mut data = vec![0u8; required_size * 2];
-
-        // Ensure proper alignment
-        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
-        if alignment_offset > 0 {
-            data = vec![0u8; required_size * 2 + alignment_offset];
-        }
-
-        // SAFETY: This is safe in tests since the data lives for the entire test
-        // duration
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let data_slice = &mut data_ptr[alignment_offset..];
-        let data_rc = Rc::new(RefCell::new(data_slice));
+        let (mut data, ptr) = create_aligned_memory(required_size * 2);
 
         // 1. Test creation
-        let map_result = SmallMemoryMap::new(data_rc.clone(), 0);
+        let map_result = SmallMemoryMap::new(ptr, data.len());
         assert!(
             map_result.is_ok(),
             "Should create map with sufficient memory"
         );
 
         // 2. Test insufficient memory at creation
-        let bad_map = SmallMemoryMap::new(data_rc.clone(), required_size * 2 - 10);
+        let bad_map_result = SmallMemoryMap::new(ptr, 10); // Too small
         assert!(
-            matches!(bad_map, Err(MemoryMapError::InsufficientMemory)),
+            matches!(bad_map_result, Err(MemoryMapError::InsufficientMemory)),
             "Should fail with insufficient memory"
         );
 
         // 3. Test basic allocation and deallocation
-        data_rc.borrow_mut().fill(0);
-        let mut map = SmallMemoryMap::new(data_rc.clone(), 0).unwrap();
+        data.fill(0); // Clear the memory
+        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate a few indices
         let index1 = map.alloc().unwrap();
@@ -160,19 +125,10 @@ mod tests {
     #[test]
     fn test_small_map_level_transition() {
         let required_size = (1 + 64) * size_of::<u64>();
-        let mut data = vec![0u8; required_size * 2];
+        let (mut data, ptr) = create_aligned_memory(required_size * 2);
 
-        let alignment_offset = (8 - (data.as_ptr() as usize % 8)) % 8;
-        if alignment_offset > 0 {
-            data = vec![0u8; required_size * 2 + alignment_offset];
-        }
-
-        let data_ptr = Box::leak(data.into_boxed_slice());
-        let data_slice = &mut data_ptr[alignment_offset..];
-        let data_rc = Rc::new(RefCell::new(data_slice));
-
-        data_rc.borrow_mut().fill(0);
-        let mut map = SmallMemoryMap::new(data_rc.clone(), 0).unwrap();
+        data.fill(0); // Clear the memory
+        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
 
         // Allocate and track indices
         let mut all_indices = Vec::new();
@@ -210,5 +166,38 @@ mod tests {
                 "65th index should use second-level bit 0"
             );
         }
+    }
+
+    #[test]
+    fn test_deallocation_and_reuse() {
+        let required_size = (1 + 64) * size_of::<u64>();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+
+        data.fill(0);
+        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+
+        // Allocate some indices
+        let idx1 = map.alloc().unwrap();
+        let idx2 = map.alloc().unwrap();
+        let idx3 = map.alloc().unwrap();
+
+        // Deallocate middle one
+        map.dealloc(idx2).unwrap();
+
+        // Should reuse the deallocated index
+        let idx4 = map.alloc().unwrap();
+        assert_eq!(idx4, idx2, "Should reuse deallocated index");
+
+        // Deallocate all
+        map.dealloc(idx1).unwrap();
+        map.dealloc(idx3).unwrap();
+        map.dealloc(idx4).unwrap();
+
+        // Should start from the beginning again
+        let idx5 = map.alloc().unwrap();
+        assert_eq!(
+            idx5, 0,
+            "Should start from beginning after deallocating all"
+        );
     }
 }
