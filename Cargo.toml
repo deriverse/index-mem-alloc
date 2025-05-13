@@ -1,6 +1,6 @@
 [package]
 name = "index-mem-alloc"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Index memory allocator"
 authors = ["Deriverse <info@deriverse.io>"]
