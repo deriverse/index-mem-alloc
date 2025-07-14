@@ -115,6 +115,15 @@ impl MemoryMap {
             Self::Small(map) => map.dealloc(index),
         }
     }
+
+    /// Check if a specific index is allocated
+    pub fn is_allocated(&self, index: usize) -> Result<bool, MemoryMapError> {
+        match self {
+            Self::Max(map) => map.is_allocated(index),
+            Self::Standard(map) => map.is_allocated(index),
+            Self::Small(map) => map.is_allocated(index),
+        }
+    }
 }
 
 /// Helper function to get mutable u64 at specified index
