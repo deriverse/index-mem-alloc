@@ -1,11 +1,11 @@
 mod get_first_zero_bit;
 mod max_memory_map;
 mod small_memory_map;
-mod trade_memory_map;
+mod standard_memory_map;
 
 use crate::{
     max_memory_map::MaxMemoryMap, small_memory_map::SmallMemoryMap,
-    trade_memory_map::StandardMemoryMap,
+    standard_memory_map::StandardMemoryMap,
 };
 use solana_program::account_info::AccountInfo;
 use std::{
@@ -113,6 +113,24 @@ impl MemoryMap {
             Self::Max(map) => map.dealloc(index),
             Self::Standard(map) => map.dealloc(index),
             Self::Small(map) => map.dealloc(index),
+        }
+    }
+
+    /// Check if a specific index is allocated
+    pub fn is_allocated(&self, index: usize) -> Result<bool, MemoryMapError> {
+        match self {
+            Self::Max(map) => map.is_allocated(index),
+            Self::Standard(map) => map.is_allocated(index),
+            Self::Small(map) => map.is_allocated(index),
+        }
+    }
+
+    /// Reset all allocations, clearing the entire memory map
+    pub fn reset(&mut self) -> Result<(), MemoryMapError> {
+        match self {
+            Self::Max(map) => map.reset(),
+            Self::Standard(map) => map.reset(),
+            Self::Small(map) => map.reset(),
         }
     }
 }

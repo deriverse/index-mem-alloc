@@ -1,6 +1,11 @@
 use crate::{get_first_zero_bit::get_first_zero_bit, get_u64, get_u64_mut, MemoryMapError};
 use std::{mem::size_of, ptr::NonNull};
 
+const FIRST_LEVEL_BITS: usize = 4;
+const SECOND_LEVEL_BITS: usize = 64;
+const THIRD_LEVEL_BITS: usize = 64;
+const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BITS) - 1; // 16383
+
 /// Standard memory map implementation (3 levels, 4 bits at first level)
 #[derive(Clone)]
 pub struct StandardMemoryMap {
@@ -13,9 +18,11 @@ impl StandardMemoryMap {
     pub(crate) fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
         // Calculate required memory size for standard map:
         // - First level: 1 word to track available blocks in level 2
-        // - Second level: 4 words (one per bit in first level)
-        // - Third level: 4*64 words (one per bit in second level)
-        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        // - Second level: FIRST_LEVEL_BITS words (one per bit in first level)
+        // - Third level: FIRST_LEVEL_BITS*SECOND_LEVEL_BITS words (one per bit in
+        //   second level)
+        let required_size =
+            (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>();
 
         // Check if there's enough memory
         if size < required_size {
@@ -27,19 +34,19 @@ impl StandardMemoryMap {
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
-        // First level allocation (4 bits)
+        // First level allocation (FIRST_LEVEL_BITS bits)
         let first_word = get_u64(self.memory, self.size, 0)?;
-        let first = get_first_zero_bit(*first_word, 4)?;
+        let first = get_first_zero_bit(*first_word, FIRST_LEVEL_BITS)?;
 
         // Second level allocation
         let second_idx = 1 + first;
         let second_word = get_u64(self.memory, self.size, second_idx)?;
-        let second = get_first_zero_bit(*second_word, 64)?;
+        let second = get_first_zero_bit(*second_word, SECOND_LEVEL_BITS)?;
 
         // Third level allocation
-        let third_idx = 5 + (first * 64) + second;
+        let third_idx = 5 + (first * SECOND_LEVEL_BITS) + second;
         let third_word = get_u64(self.memory, self.size, third_idx)?;
-        let third = get_first_zero_bit(*third_word, 64)?;
+        let third = get_first_zero_bit(*third_word, THIRD_LEVEL_BITS)?;
 
         // Mark as allocated
         let third_word_mut = get_u64_mut(self.memory, self.size, third_idx)?;
@@ -60,9 +67,7 @@ impl StandardMemoryMap {
 
     /// Deallocate a previously allocated slot
     pub(crate) fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
-        // Check upper bound
-        let max_index = (4 << 12) - 1; // 16383
-        if index > max_index {
+        if index > MAX_INDEX {
             return Err(MemoryMapError::InvalidIndex);
         }
 
@@ -84,6 +89,46 @@ impl StandardMemoryMap {
 
         Ok(())
     }
+
+    /// Check if a specific index is allocated
+    pub(crate) fn is_allocated(&self, index: usize) -> Result<bool, MemoryMapError> {
+        if index > MAX_INDEX {
+            return Err(MemoryMapError::InvalidIndex);
+        }
+
+        // Calculate the third level word index (same as in dealloc)
+        let third_idx = 5 + (index >> 6);
+        let third_bit = index & 0x3f;
+
+        // Get the third level word and check if the bit is set
+        let third_word = get_u64(self.memory, self.size, third_idx)?;
+        let is_allocated = (third_word & (1 << third_bit)) != 0;
+
+        Ok(is_allocated)
+    }
+
+    /// Reset all allocations, clearing the entire memory map
+    pub(crate) fn reset(&mut self) -> Result<(), MemoryMapError> {
+        // Clear first level (1 word)
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word = 0;
+
+        // Clear second level (FIRST_LEVEL_BITS words)
+        for i in 1..=FIRST_LEVEL_BITS {
+            let second_word = get_u64_mut(self.memory, self.size, i)?;
+            *second_word = 0;
+        }
+
+        // Clear third level (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS words)
+        let third_level_start = 1 + FIRST_LEVEL_BITS;
+        let third_level_count = FIRST_LEVEL_BITS * SECOND_LEVEL_BITS;
+        for i in 0..third_level_count {
+            let third_word = get_u64_mut(self.memory, self.size, third_level_start + i)?;
+            *third_word = 0;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -91,10 +136,14 @@ mod tests {
     use super::*;
     use crate::create_aligned_memory;
 
+    fn get_required_size() -> usize {
+        (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>()
+    }
+
     #[test]
     fn test_standard_map_basic_operations() {
         // Create memory with sufficient size for StandardMemoryMap
-        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let required_size = get_required_size();
         let (data, ptr) = create_aligned_memory(required_size * 2);
 
         // Test creation and basic memory allocation
@@ -116,7 +165,7 @@ mod tests {
     #[test]
     fn test_standard_map_level_transitions() {
         // Create memory with sufficient size for level transitions
-        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let required_size = get_required_size();
         let (mut data, ptr) = create_aligned_memory(required_size * 2);
 
         data.fill(0);
@@ -126,7 +175,14 @@ mod tests {
         let mut all_indices = Vec::new();
         for _ in 0..150 {
             match map.alloc() {
-                Ok(idx) => all_indices.push(idx),
+                Ok(idx) => {
+                    all_indices.push(idx);
+                    assert!(
+                        map.is_allocated(idx).unwrap(),
+                        "Index {} should be allocated",
+                        idx
+                    );
+                }
                 Err(_) => break,
             }
         }
@@ -160,11 +216,16 @@ mod tests {
 
     #[test]
     fn test_standard_map_allocation_and_deallocation() {
-        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let required_size = get_required_size();
         let (mut data, ptr) = create_aligned_memory(required_size);
 
         data.fill(0);
         let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+
+        // Check initial state
+        assert!(!map.is_allocated(0).unwrap());
+        assert!(!map.is_allocated(1).unwrap());
+        assert!(!map.is_allocated(2).unwrap());
 
         // Allocate several indices
         let idx1 = map.alloc().unwrap();
@@ -175,12 +236,22 @@ mod tests {
         assert_eq!(idx2, 1);
         assert_eq!(idx3, 2);
 
+        // Check allocation state
+        assert!(map.is_allocated(idx1).unwrap());
+        assert!(map.is_allocated(idx2).unwrap());
+        assert!(map.is_allocated(idx3).unwrap());
+        assert!(!map.is_allocated(3).unwrap());
+
         // Deallocate middle index
         map.dealloc(idx2).unwrap();
+        assert!(!map.is_allocated(idx2).unwrap());
+        assert!(map.is_allocated(idx1).unwrap());
+        assert!(map.is_allocated(idx3).unwrap());
 
         // Should reuse the deallocated index
         let idx4 = map.alloc().unwrap();
         assert_eq!(idx4, idx2);
+        assert!(map.is_allocated(idx4).unwrap());
 
         // Test invalid index deallocation
         let result = map.dealloc(20000);
@@ -189,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_standard_map_capacity() {
-        let required_size = (1 + 4 + 4 * 64) * size_of::<u64>();
+        let required_size = get_required_size();
         let (mut data, ptr) = create_aligned_memory(required_size);
 
         data.fill(0);
@@ -200,7 +271,14 @@ mod tests {
         let mut allocated = Vec::new();
         for _ in 0..1000 {
             match map.alloc() {
-                Ok(idx) => allocated.push(idx),
+                Ok(idx) => {
+                    allocated.push(idx);
+                    assert!(
+                        map.is_allocated(idx).unwrap(),
+                        "Index {} should be allocated",
+                        idx
+                    );
+                }
                 Err(_) => break,
             }
         }
@@ -213,10 +291,84 @@ mod tests {
         // Deallocate all
         for idx in allocated {
             map.dealloc(idx).unwrap();
+            assert!(
+                !map.is_allocated(idx).unwrap(),
+                "Index {} should be deallocated",
+                idx
+            );
         }
 
         // Should be able to allocate again
         let idx = map.alloc().unwrap();
         assert_eq!(idx, 0, "After deallocating all, should start from 0");
+        assert!(map.is_allocated(idx).unwrap());
+    }
+
+    #[test]
+    fn test_is_allocated_level_boundaries() {
+        let required_size = get_required_size();
+        let (mut data, ptr) = create_aligned_memory(required_size);
+        data.fill(0);
+
+        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+
+        // Test specific boundary indices for standard map (3 levels: 4, 64, 64)
+        let test_indices = [
+            0,    // first=0, second=0, third=0
+            63,   // first=0, second=0, third=63 (last in first third-level block)
+            64,   // first=0, second=1, third=0 (first in second third-level block)
+            65,   // first=0, second=1, third=1
+            4095, // first=0, second=63, third=63 (last in first second-level block)
+            4096, // first=1, second=0, third=0 (first in second second-level block)
+            4097, // first=1, second=0, third=1
+        ];
+
+        // Initially all should be unallocated
+        for &idx in &test_indices {
+            assert!(
+                !map.is_allocated(idx).unwrap(),
+                "Index {} should not be allocated initially",
+                idx
+            );
+        }
+
+        // Allocate specific indices and verify
+        for &idx in &test_indices {
+            // Force allocation by allocating sequential indices up to this point
+            while map.alloc().unwrap() < idx {
+                // Continue allocating until we reach the target index
+            }
+            // Now idx should be allocated
+            assert!(
+                map.is_allocated(idx).unwrap(),
+                "Index {} should be allocated",
+                idx
+            );
+        }
+
+        // Test invalid index
+        let invalid_result = map.is_allocated(MAX_INDEX + 1);
+        assert!(
+            matches!(invalid_result, Err(MemoryMapError::InvalidIndex)),
+            "Should return InvalidIndex for index beyond MAX_INDEX"
+        );
+
+        // Test maximum valid index
+        assert!(
+            !map.is_allocated(MAX_INDEX).unwrap(),
+            "MAX_INDEX should not be allocated yet"
+        );
+
+        // Reset
+        map.reset().unwrap();
+
+        // Verify all are unallocated
+        for &idx in &test_indices {
+            assert!(
+                !map.is_allocated(idx).unwrap(),
+                "Index {} should be unallocated after reset",
+                idx
+            );
+        }
     }
 }
