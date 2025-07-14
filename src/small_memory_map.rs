@@ -86,6 +86,21 @@ impl SmallMemoryMap {
 
         Ok(is_allocated)
     }
+
+    /// Reset all allocations, clearing the entire memory map
+    pub fn reset(&mut self) -> Result<(), MemoryMapError> {
+        // Clear first level (1 word)
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word = 0;
+
+        // Clear second level (BITS_PER_LEVEL words)
+        for i in 1..=BITS_PER_LEVEL {
+            let second_word = get_u64_mut(self.memory, self.size, i)?;
+            *second_word = 0;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -314,5 +329,17 @@ mod tests {
             !map.is_allocated(MAX_INDEX).unwrap(),
             "MAX_INDEX should not be allocated yet"
         );
+
+        // Reset
+        map.reset().unwrap();
+
+        // Verify all are unallocated
+        for &idx in &test_indices {
+            assert!(
+                !map.is_allocated(idx).unwrap(),
+                "Index {} should be unallocated after reset",
+                idx
+            );
+        }
     }
 }

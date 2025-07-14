@@ -106,6 +106,29 @@ impl StandardMemoryMap {
 
         Ok(is_allocated)
     }
+
+    /// Reset all allocations, clearing the entire memory map
+    pub(crate) fn reset(&mut self) -> Result<(), MemoryMapError> {
+        // Clear first level (1 word)
+        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        *first_word = 0;
+
+        // Clear second level (FIRST_LEVEL_BITS words)
+        for i in 1..=FIRST_LEVEL_BITS {
+            let second_word = get_u64_mut(self.memory, self.size, i)?;
+            *second_word = 0;
+        }
+
+        // Clear third level (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS words)
+        let third_level_start = 1 + FIRST_LEVEL_BITS;
+        let third_level_count = FIRST_LEVEL_BITS * SECOND_LEVEL_BITS;
+        for i in 0..third_level_count {
+            let third_word = get_u64_mut(self.memory, self.size, third_level_start + i)?;
+            *third_word = 0;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -335,5 +358,17 @@ mod tests {
             !map.is_allocated(MAX_INDEX).unwrap(),
             "MAX_INDEX should not be allocated yet"
         );
+
+        // Reset
+        map.reset().unwrap();
+
+        // Verify all are unallocated
+        for &idx in &test_indices {
+            assert!(
+                !map.is_allocated(idx).unwrap(),
+                "Index {} should be unallocated after reset",
+                idx
+            );
+        }
     }
 }
