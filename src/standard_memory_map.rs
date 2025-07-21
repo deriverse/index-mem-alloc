@@ -18,7 +18,7 @@ impl PartialEq for StandardMemoryMap {
         (0..self.size)
             .into_iter()
             .try_for_each(|index| unsafe {
-                if self.memory.add(index).read() != other.memory.add(index).read() {
+                if *self.memory.as_ptr().add(index) != *other.memory.as_ptr().add(index) {
                     Err(())
                 } else {
                     Ok(())
