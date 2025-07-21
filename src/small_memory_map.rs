@@ -8,7 +8,7 @@ const MAX_INDEX: usize = (BITS_PER_LEVEL * BITS_PER_LEVEL) - 1; // 4095
 #[derive(Clone)]
 pub struct SmallMemoryMap {
     memory: NonNull<u8>,
-    size: usize,
+    pub(crate) size: usize,
 }
 
 impl PartialEq for SmallMemoryMap {

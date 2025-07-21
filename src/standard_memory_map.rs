@@ -10,7 +10,7 @@ const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BIT
 #[derive(Clone)]
 pub struct StandardMemoryMap {
     memory: NonNull<u8>,
-    size: usize,
+    pub(crate) size: usize,
 }
 
 impl PartialEq for StandardMemoryMap {
