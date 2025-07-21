@@ -51,7 +51,7 @@ pub enum MemoryMap {
 
 impl PartialEq for MemoryMap {
     fn eq(&self, other: &Self) -> bool {
-        match self {
+        (match self {
             MemoryMap::Max(_self) => {
                 if let MemoryMap::Max(other) = other {
                     _self == other
@@ -73,7 +73,7 @@ impl PartialEq for MemoryMap {
                     false
                 }
             }
-        }
+        }) && self.len() == other.len()
     }
 }
 
@@ -169,6 +169,14 @@ impl MemoryMap {
             Self::Max(map) => map.reset(),
             Self::Standard(map) => map.reset(),
             Self::Small(map) => map.reset(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            MemoryMap::Max(map) => map.size,
+            MemoryMap::Standard(map) => map.size,
+            MemoryMap::Small(map) => map.size,
         }
     }
 }

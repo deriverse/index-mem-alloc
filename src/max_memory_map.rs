@@ -9,7 +9,7 @@ const MAX_INDEX: usize = BITS_PER_LEVEL.pow(LEVELS_COUNT as u32) - 1; // 262143
 #[derive(Clone)]
 pub struct MaxMemoryMap {
     memory: NonNull<u8>,
-    size: usize,
+    pub(crate) size: usize,
 }
 
 impl PartialEq for MaxMemoryMap {
