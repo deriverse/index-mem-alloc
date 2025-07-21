@@ -17,7 +17,7 @@ impl PartialEq for MaxMemoryMap {
         (0..self.size)
             .into_iter()
             .try_for_each(|index| unsafe {
-                if *self.memory.add(index).as_ref() != *other.memory.add(index).as_ref() {
+                if *self.memory.as_ptr().add(index) != *other.memory.as_ptr().add(index) {
                     Err(())
                 } else {
                     Ok(())
