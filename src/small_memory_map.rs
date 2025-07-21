@@ -11,6 +11,27 @@ pub struct SmallMemoryMap {
     size: usize,
 }
 
+impl PartialEq for SmallMemoryMap {
+    fn eq(&self, other: &Self) -> bool {
+        (0..self.size)
+            .into_iter()
+            .try_for_each(|index| unsafe {
+                if self.memory.add(index).read() != other.memory.add(index).read() {
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            })
+            .is_ok()
+    }
+}
+
+impl std::fmt::Debug for SmallMemoryMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Small Memory Map")
+    }
+}
+
 impl SmallMemoryMap {
     /// Create a new small memory map
     pub fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
@@ -140,6 +161,54 @@ mod tests {
 
     fn get_required_size() -> usize {
         (1 + BITS_PER_LEVEL) * size_of::<u64>()
+    }
+
+    #[test]
+    fn eq_test() {
+        let required_size = get_required_size();
+        let (data, ptr) = create_aligned_memory(required_size);
+        let (data2, ptr2) = create_aligned_memory(required_size);
+
+        let mut map_result = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map_result2 = SmallMemoryMap::new(ptr2, data2.len()).unwrap();
+
+        let transform = |map: &mut SmallMemoryMap| {
+            map.alloc().unwrap();
+            map.alloc().unwrap();
+            map.alloc_at(100).unwrap();
+            map.alloc_at(200).unwrap();
+            map.alloc_at(300).unwrap();
+        };
+
+        transform(&mut map_result);
+        transform(&mut map_result2);
+
+        assert!(
+            map_result == map_result2,
+            "After simmilar transformation maps must be the same"
+        );
+        map_result.alloc_at(10).unwrap();
+
+        assert_ne!(
+            map_result, map_result2,
+            "Adter different sequence of transformation maps must not be same"
+        );
+
+        map_result.reset().unwrap();
+        map_result2.reset().unwrap();
+
+        assert_eq!(
+            map_result, map_result2,
+            "After reseteting 2 maps they must be the same"
+        );
+        let (data3, ptr3) = create_aligned_memory(required_size);
+
+        let new_map = SmallMemoryMap::new(ptr3, data3.len()).unwrap();
+
+        assert_eq!(
+            new_map, map_result,
+            "Reseted map must be equal to an empty map"
+        );
     }
 
     #[test]

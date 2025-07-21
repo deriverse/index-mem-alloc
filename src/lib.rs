@@ -49,6 +49,34 @@ pub enum MemoryMap {
     Small(SmallMemoryMap),
 }
 
+impl PartialEq for MemoryMap {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            MemoryMap::Max(_self) => {
+                if let MemoryMap::Max(other) = other {
+                    _self == other
+                } else {
+                    false
+                }
+            }
+            MemoryMap::Standard(_self) => {
+                if let MemoryMap::Standard(other) = other {
+                    _self == other
+                } else {
+                    false
+                }
+            }
+            MemoryMap::Small(_self) => {
+                if let MemoryMap::Small(other) = other {
+                    _self == other
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 impl MemoryMap {
     /// Create a new memory map from AccountInfo
     ///
@@ -209,6 +237,25 @@ mod tests {
             data.rotate_left(8 - misalignment);
         }
         data
+    }
+
+    #[test]
+    fn eq_test() {
+        let mut buffer = create_aligned_buffer(512);
+        let map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
+        let mut buffer = create_aligned_buffer(512);
+        let map2 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
+        assert!(map == map2, "Empty maps with similar type must be the same");
+
+        let mut buffer = create_aligned_buffer(2088);
+        let map3 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Standard).unwrap();
+
+        assert!(
+            map != map3,
+            "Empty maps with different types must not be similar"
+        );
     }
 
     #[test]
