@@ -50,6 +50,35 @@ impl SmallMemoryMap {
         Ok((first << 6) + second)
     }
 
+    /// Mark a specific index as allocated
+    pub(crate) fn alloc_at(&mut self, index: usize) -> Result<(), MemoryMapError> {
+        if index > MAX_INDEX {
+            return Err(MemoryMapError::InvalidIndex);
+        }
+        let first_idx = index >> 6;
+        let bit_in_second = index & 0x3f;
+
+        let second_word_idx = 1 + first_idx;
+        let second_value = 1u64 << bit_in_second;
+
+        let second_word_mut = get_u64_mut(self.memory, self.size, second_word_idx)?;
+        if *second_word_mut & second_value != 0 {
+            return Err(MemoryMapError::InvalidIndex);
+        }
+
+        // Mark as allocated in third level
+        *second_word_mut |= second_value;
+
+        // Update first level if needed
+        if *second_word_mut == u64::MAX {
+            let first_value = 1u64 << first_idx;
+            let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+            *first_word_mut |= first_value;
+        }
+
+        Ok(())
+    }
+
     /// Deallocate a previously allocated slot
     pub fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
         if index > MAX_INDEX {
@@ -111,6 +140,33 @@ mod tests {
 
     fn get_required_size() -> usize {
         (1 + BITS_PER_LEVEL) * size_of::<u64>()
+    }
+
+    #[test]
+    fn allocation_by_index() {
+        let required_size = get_required_size();
+        let (data, ptr) = create_aligned_memory(required_size);
+
+        let map_result = SmallMemoryMap::new(ptr, data.len());
+        assert!(
+            map_result.is_ok(),
+            "Should create map with sufficient memory"
+        );
+
+        let mut map = map_result.unwrap();
+
+        map.alloc_at(1552).unwrap();
+        let double_alloc = map.alloc_at(1552);
+
+        // Try allocate on the same address
+        assert!(matches!(double_alloc, Err(MemoryMapError::InvalidIndex)));
+        assert_eq!(map.is_allocated(1552).unwrap(), true);
+
+        map.alloc().unwrap();
+        let double_alloc = map.alloc_at(0);
+
+        // Conflict with auto alloc
+        assert!(matches!(double_alloc, Err(MemoryMapError::InvalidIndex)));
     }
 
     #[test]
