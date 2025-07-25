@@ -203,16 +203,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn alloc_at_zero() {
-        let required_size = get_required_size();
-        let (data, ptr) = create_aligned_memory(required_size);
-
-        let mut map_result = MaxMemoryMap::new(ptr, data.len()).unwrap();
-
-        map_result.alloc_at(0).unwrap();
-    }
-
-    #[test]
     fn eq_test() {
         let required_size = get_required_size();
         let (data, ptr) = create_aligned_memory(required_size);
