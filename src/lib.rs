@@ -9,6 +9,7 @@ use crate::{
 };
 use solana_program::account_info::AccountInfo;
 use std::{
+    iter::Map,
     mem::{align_of, size_of},
     ptr::NonNull,
 };
@@ -177,6 +178,14 @@ impl MemoryMap {
             MemoryMap::Max(map) => map.size,
             MemoryMap::Standard(map) => map.size,
             MemoryMap::Small(map) => map.size,
+        }
+    }
+
+    pub fn get_type(&self) -> MapType {
+        match self {
+            MemoryMap::Max(_) => MapType::Max,
+            MemoryMap::Standard(_) => MapType::Standard,
+            MemoryMap::Small(_) => MapType::Small,
         }
     }
 }
