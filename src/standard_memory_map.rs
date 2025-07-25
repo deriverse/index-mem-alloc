@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(map.is_allocated(1552).unwrap(), true);
 
         map.alloc().unwrap();
-        let double_alloc = map.alloc_at(0);
+        let double_alloc = map.alloc_at(1);
 
         assert!(matches!(
             double_alloc,

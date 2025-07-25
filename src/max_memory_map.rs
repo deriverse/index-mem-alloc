@@ -17,6 +17,11 @@ impl PartialEq for MaxMemoryMap {
         (0..self.size)
             .into_iter()
             .try_for_each(|index| unsafe {
+                // println!(
+                //     "{:?} - {:?}",
+                //     *self.memory.as_ptr().add(index),
+                //     *other.memory.as_ptr().add(index)
+                // );
                 if *self.memory.as_ptr().add(index) != *other.memory.as_ptr().add(index) {
                     Err(())
                 } else {
@@ -200,6 +205,16 @@ pub(crate) mod tests {
     // Calculate required memory size for max map
     fn get_required_size() -> usize {
         (1 + 64 + 64 * 64) * size_of::<u64>()
+    }
+
+    #[test]
+    fn alloc_at_zero() {
+        let required_size = get_required_size();
+        let (data, ptr) = create_aligned_memory(required_size);
+
+        let mut map_result = MaxMemoryMap::new(ptr, data.len()).unwrap();
+
+        map_result.alloc_at(0).unwrap();
     }
 
     #[test]
