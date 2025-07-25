@@ -10,7 +10,6 @@ const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BIT
 #[derive(Clone)]
 pub struct StandardMemoryMap {
     pub(crate) memory: NonNull<u8>,
-    pub(crate) size: usize,
 }
 
 impl std::fmt::Debug for StandardMemoryMap {
@@ -20,50 +19,40 @@ impl std::fmt::Debug for StandardMemoryMap {
 }
 
 impl StandardMemoryMap {
-    /// Create a new standard memory map
-    pub(crate) fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
-        // Calculate required memory size for standard map:
-        // - First level: 1 word to track available blocks in level 2
-        // - Second level: FIRST_LEVEL_BITS words (one per bit in first level)
-        // - Third level: FIRST_LEVEL_BITS*SECOND_LEVEL_BITS words (one per bit in
-        //   second level)
-        let required_size =
-            (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>();
-
-        // Check if there's enough memory
-        if size < required_size {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
-
-        Ok(Self { memory, size })
-    }
+    /// Calculate required memory size for standard map:
+    /// - First level: 1 word to track available blocks in level 2
+    /// - Second level: FIRST_LEVEL_BITS words (one per bit in first level)
+    /// - Third level: FIRST_LEVEL_BITS*SECOND_LEVEL_BITS words (one per bit in
+    ///   second level)
+    pub(crate) const SIZE: usize =
+        (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>();
 
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
         // First level allocation (FIRST_LEVEL_BITS bits)
-        let first_word = get_u64(self.memory, self.size, 0)?;
+        let first_word = get_u64(self.memory, Self::SIZE, 0)?;
         let first = get_first_zero_bit(*first_word, FIRST_LEVEL_BITS)?;
 
         // Second level allocation
         let second_idx = 1 + first;
-        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second_word = get_u64(self.memory, Self::SIZE, second_idx)?;
         let second = get_first_zero_bit(*second_word, SECOND_LEVEL_BITS)?;
 
         // Third level allocation
         let third_idx = 5 + (first * SECOND_LEVEL_BITS) + second;
-        let third_word = get_u64(self.memory, self.size, third_idx)?;
+        let third_word = get_u64(self.memory, Self::SIZE, third_idx)?;
         let third = get_first_zero_bit(*third_word, THIRD_LEVEL_BITS)?;
 
         // Mark as allocated
-        let third_word_mut = get_u64_mut(self.memory, self.size, third_idx)?;
+        let third_word_mut = get_u64_mut(self.memory, Self::SIZE, third_idx)?;
         *third_word_mut |= 1 << third;
 
         if *third_word_mut == u64::MAX {
-            let second_word_mut = get_u64_mut(self.memory, self.size, second_idx)?;
+            let second_word_mut = get_u64_mut(self.memory, Self::SIZE, second_idx)?;
             *second_word_mut |= 1 << second;
 
             if *second_word_mut == u64::MAX {
-                let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+                let first_word_mut = get_u64_mut(self.memory, Self::SIZE, 0)?;
                 *first_word_mut |= 1 << first;
             }
         }
@@ -84,13 +73,13 @@ impl StandardMemoryMap {
         let third_idx = 5 + (index >> 6);
 
         // Clear allocation bits
-        let third_word = get_u64_mut(self.memory, self.size, third_idx)?;
+        let third_word = get_u64_mut(self.memory, Self::SIZE, third_idx)?;
         *third_word &= !(1 << (index & 0x3f));
 
-        let second_word = get_u64_mut(self.memory, self.size, second_idx)?;
+        let second_word = get_u64_mut(self.memory, Self::SIZE, second_idx)?;
         *second_word &= !(1 << second);
 
-        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        let first_word = get_u64_mut(self.memory, Self::SIZE, 0)?;
         *first_word &= !(1 << first);
 
         Ok(())
@@ -109,7 +98,7 @@ impl StandardMemoryMap {
         let third_word_idx = 5 + (index >> 6);
         let third_value = 1u64 << bit_in_third;
 
-        let third_word_mut = get_u64_mut(self.memory, self.size, third_word_idx)?;
+        let third_word_mut = get_u64_mut(self.memory, Self::SIZE, third_word_idx)?;
         if *third_word_mut & third_value != 0 {
             return Err(MemoryMapError::DoubleAllocation(index));
         }
@@ -120,13 +109,13 @@ impl StandardMemoryMap {
         // Update second level if needed
         if *third_word_mut == u64::MAX {
             let second_value = 1u64 << second_idx;
-            let second_word_mut = get_u64_mut(self.memory, self.size, second_word_idx)?;
+            let second_word_mut = get_u64_mut(self.memory, Self::SIZE, second_word_idx)?;
             *second_word_mut |= second_value;
 
             // Update first level if needed
             if *second_word_mut == u64::MAX {
                 let first_value = 1u64 << first_idx;
-                let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+                let first_word_mut = get_u64_mut(self.memory, Self::SIZE, 0)?;
                 *first_word_mut |= first_value;
             }
         }
@@ -145,7 +134,7 @@ impl StandardMemoryMap {
         let third_bit = index & 0x3f;
 
         // Get the third level word and check if the bit is set
-        let third_word = get_u64(self.memory, self.size, third_idx)?;
+        let third_word = get_u64(self.memory, Self::SIZE, third_idx)?;
         let is_allocated = (third_word & (1 << third_bit)) != 0;
 
         Ok(is_allocated)
@@ -154,12 +143,12 @@ impl StandardMemoryMap {
     /// Reset all allocations, clearing the entire memory map
     pub(crate) fn reset(&mut self) -> Result<(), MemoryMapError> {
         // Clear first level (1 word)
-        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        let first_word = get_u64_mut(self.memory, Self::SIZE, 0)?;
         *first_word = 0;
 
         // Clear second level (FIRST_LEVEL_BITS words)
         for i in 1..=FIRST_LEVEL_BITS {
-            let second_word = get_u64_mut(self.memory, self.size, i)?;
+            let second_word = get_u64_mut(self.memory, Self::SIZE, i)?;
             *second_word = 0;
         }
 
@@ -167,7 +156,7 @@ impl StandardMemoryMap {
         let third_level_start = 1 + FIRST_LEVEL_BITS;
         let third_level_count = FIRST_LEVEL_BITS * SECOND_LEVEL_BITS;
         for i in 0..third_level_count {
-            let third_word = get_u64_mut(self.memory, self.size, third_level_start + i)?;
+            let third_word = get_u64_mut(self.memory, Self::SIZE, third_level_start + i)?;
             *third_word = 0;
         }
 
@@ -175,10 +164,26 @@ impl StandardMemoryMap {
     }
 }
 
+impl PartialEq for StandardMemoryMap {
+    fn eq(&self, other: &Self) -> bool {
+        const WORDS_TO_COMPARE: usize = StandardMemoryMap::SIZE / size_of::<u64>();
+
+        (0..WORDS_TO_COMPARE).all(|index| {
+            match (
+                get_u64(self.memory, Self::SIZE, index),
+                get_u64(other.memory, Self::SIZE, index),
+            ) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::create_aligned_memory;
+    use crate::{create_aligned_memory, MapType, MemoryMap};
 
     fn get_required_size() -> usize {
         (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>()
@@ -187,10 +192,9 @@ mod tests {
     #[test]
     fn allocation_by_index() {
         let required_size = get_required_size();
-        let (data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
 
-        let mut map = StandardMemoryMap::new(ptr, data.len())
-            .expect("Should create map with sufficient memory.");
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
 
         map.alloc_at(1552).unwrap();
         let double_alloc = map.alloc_at(1552);
@@ -212,35 +216,13 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_map_basic_operations() {
-        // Create memory with sufficient size for StandardMemoryMap
-        let required_size = get_required_size();
-        let (data, ptr) = create_aligned_memory(required_size * 2);
-
-        // Test creation and basic memory allocation
-        let map_result = StandardMemoryMap::new(ptr, data.len());
-        assert!(
-            map_result.is_ok(),
-            "Should create map with sufficient memory"
-        );
-
-        // Test insufficient memory error
-        let (_small_data, small_ptr) = create_aligned_memory(10);
-        let bad_map = StandardMemoryMap::new(small_ptr, 10);
-        assert!(
-            matches!(bad_map, Err(MemoryMapError::InsufficientMemory)),
-            "Should fail with insufficient memory"
-        );
-    }
-
-    #[test]
     fn test_standard_map_level_transitions() {
         // Create memory with sufficient size for level transitions
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size * 2);
+        let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
 
         // Allocate indices to cross level boundaries
         let mut all_indices = Vec::new();
@@ -288,10 +270,10 @@ mod tests {
     #[test]
     fn test_standard_map_allocation_and_deallocation() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
 
         // Check initial state
         assert!(!map.is_allocated(0).unwrap());
@@ -332,10 +314,10 @@ mod tests {
     #[test]
     fn test_standard_map_capacity() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
 
         // StandardMemoryMap with 4 bits at first level can allocate up to 4 * 64 * 64 =
         // 16384 indices Let's allocate a reasonable subset to test
@@ -378,10 +360,10 @@ mod tests {
     #[test]
     fn test_is_allocated_level_boundaries() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
         data.fill(0);
 
-        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
 
         // Test specific boundary indices for standard map (3 levels: 4, 64, 64)
         let test_indices = [

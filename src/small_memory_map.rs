@@ -8,7 +8,6 @@ const MAX_INDEX: usize = (BITS_PER_LEVEL * BITS_PER_LEVEL) - 1; // 4095
 #[derive(Clone)]
 pub struct SmallMemoryMap {
     pub(crate) memory: NonNull<u8>,
-    pub(crate) size: usize,
 }
 
 impl std::fmt::Debug for SmallMemoryMap {
@@ -18,38 +17,27 @@ impl std::fmt::Debug for SmallMemoryMap {
 }
 
 impl SmallMemoryMap {
-    /// Create a new small memory map
-    pub fn new(memory: NonNull<u8>, size: usize) -> Result<Self, MemoryMapError> {
-        // Calculate required memory size for small map:
-        // - First level: 1 word to track available blocks in level 2
-        // - Second level: BITS_PER_LEVEL words (one per bit in first level)
-        let required_size = (1 + BITS_PER_LEVEL) * size_of::<u64>();
-
-        // Check if there's enough memory
-        if size < required_size {
-            return Err(MemoryMapError::InsufficientMemory);
-        }
-
-        Ok(Self { memory, size })
-    }
+    /// - First level: 1 word to track available blocks in level 2
+    /// - Second level: BITS_PER_LEVEL words (one per bit in first level)
+    pub const SIZE: usize = (1 + BITS_PER_LEVEL) * size_of::<u64>();
 
     /// Allocate a new slot
     pub fn alloc(&mut self) -> Result<usize, MemoryMapError> {
         // First level allocation
-        let first_word = get_u64(self.memory, self.size, 0)?;
+        let first_word = get_u64(self.memory, Self::SIZE, 0)?;
         let first = get_first_zero_bit(*first_word, BITS_PER_LEVEL)?;
 
         // Second level allocation
         let second_idx = 1 + first;
-        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second_word = get_u64(self.memory, Self::SIZE, second_idx)?;
         let second = get_first_zero_bit(*second_word, BITS_PER_LEVEL)?;
 
         // Mark as allocated
-        let second_word_mut = get_u64_mut(self.memory, self.size, second_idx)?;
+        let second_word_mut = get_u64_mut(self.memory, Self::SIZE, second_idx)?;
         *second_word_mut |= 1 << second;
 
         if *second_word_mut == u64::MAX {
-            let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+            let first_word_mut = get_u64_mut(self.memory, Self::SIZE, 0)?;
             *first_word_mut |= 1 << first;
         }
 
@@ -67,7 +55,7 @@ impl SmallMemoryMap {
         let second_word_idx = 1 + first_idx;
         let second_value = 1u64 << bit_in_second;
 
-        let second_word_mut = get_u64_mut(self.memory, self.size, second_word_idx)?;
+        let second_word_mut = get_u64_mut(self.memory, Self::SIZE, second_word_idx)?;
         if *second_word_mut & second_value != 0 {
             return Err(MemoryMapError::DoubleAllocation(index));
         }
@@ -78,7 +66,7 @@ impl SmallMemoryMap {
         // Update first level if needed
         if *second_word_mut == u64::MAX {
             let first_value = 1u64 << first_idx;
-            let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+            let first_word_mut = get_u64_mut(self.memory, Self::SIZE, 0)?;
             *first_word_mut |= first_value;
         }
 
@@ -96,10 +84,10 @@ impl SmallMemoryMap {
         let second_idx = 1 + first;
 
         // Clear allocation bits
-        let second_word = get_u64_mut(self.memory, self.size, second_idx)?;
+        let second_word = get_u64_mut(self.memory, Self::SIZE, second_idx)?;
         *second_word &= !(1 << (index & 0x3f));
 
-        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        let first_word = get_u64_mut(self.memory, Self::SIZE, 0)?;
         *first_word &= !(1 << first);
 
         Ok(())
@@ -116,7 +104,7 @@ impl SmallMemoryMap {
         let second_bit = index & 0x3f;
 
         // Get the second level word and check if the bit is set
-        let second_word = get_u64(self.memory, self.size, second_idx)?;
+        let second_word = get_u64(self.memory, Self::SIZE, second_idx)?;
         let is_allocated = (second_word & (1 << second_bit)) != 0;
 
         Ok(is_allocated)
@@ -125,12 +113,12 @@ impl SmallMemoryMap {
     /// Reset all allocations, clearing the entire memory map
     pub fn reset(&mut self) -> Result<(), MemoryMapError> {
         // Clear first level (1 word)
-        let first_word = get_u64_mut(self.memory, self.size, 0)?;
+        let first_word = get_u64_mut(self.memory, Self::SIZE, 0)?;
         *first_word = 0;
 
         // Clear second level (BITS_PER_LEVEL words)
         for i in 1..=BITS_PER_LEVEL {
-            let second_word = get_u64_mut(self.memory, self.size, i)?;
+            let second_word = get_u64_mut(self.memory, Self::SIZE, i)?;
             *second_word = 0;
         }
 
@@ -141,20 +129,19 @@ impl SmallMemoryMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::create_aligned_memory;
+    use crate::{create_aligned_memory, MapType, MemoryMap};
     use std::mem::size_of;
 
     fn get_required_size() -> usize {
-        (1 + BITS_PER_LEVEL) * size_of::<u64>()
+        SmallMemoryMap::SIZE
     }
 
     #[test]
     fn allocation_by_index() {
         let required_size = get_required_size();
-        let (data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
 
-        let mut map = SmallMemoryMap::new(ptr, data.len())
-            .expect("Should create map with sufficient memory.");
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Small).unwrap();
 
         map.alloc_at(1552).unwrap();
         let double_alloc = map.alloc_at(1552);
@@ -178,25 +165,11 @@ mod tests {
     #[test]
     fn test_small_map_basic_operations() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size * 2);
+        let mut data = create_aligned_memory(required_size);
 
-        // 1. Test creation
-        let map_result = SmallMemoryMap::new(ptr, data.len());
-        assert!(
-            map_result.is_ok(),
-            "Should create map with sufficient memory"
-        );
-
-        // 2. Test insufficient memory at creation
-        let bad_map_result = SmallMemoryMap::new(ptr, 10); // Too small
-        assert!(
-            matches!(bad_map_result, Err(MemoryMapError::InsufficientMemory)),
-            "Should fail with insufficient memory"
-        );
-
-        // 3. Test basic allocation and deallocation
+        // Test basic allocation and deallocation
         data.fill(0); // Clear the memory
-        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Small).unwrap();
 
         // Check initial state
         assert!(!map.is_allocated(0).unwrap());
@@ -228,7 +201,7 @@ mod tests {
         assert_eq!(index4, index2, "Should reuse deallocated index");
         assert!(map.is_allocated(index4).unwrap());
 
-        // 4. Test invalid deallocation
+        // Test invalid deallocation
         let invalid_index = 5000; // Beyond capacity
         let dealloc_result = map.dealloc(invalid_index);
         assert!(
@@ -240,10 +213,10 @@ mod tests {
     #[test]
     fn test_small_map_level_transition() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size * 2);
+        let mut data = create_aligned_memory(required_size);
 
         data.fill(0); // Clear the memory
-        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Small).unwrap();
 
         // Allocate and track indices
         let mut all_indices = Vec::new();
@@ -293,10 +266,10 @@ mod tests {
     #[test]
     fn test_deallocation_and_reuse() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Small).unwrap();
 
         // Allocate some indices
         let idx1 = map.alloc().unwrap();
@@ -341,10 +314,10 @@ mod tests {
     #[test]
     fn test_is_allocated_level_boundaries() {
         let required_size = get_required_size();
-        let (mut data, ptr) = create_aligned_memory(required_size);
+        let mut data = create_aligned_memory(required_size);
         data.fill(0);
 
-        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Small).unwrap();
 
         // Test specific boundary indices for small map (2 levels)
         let test_indices = [
