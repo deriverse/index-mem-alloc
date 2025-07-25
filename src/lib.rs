@@ -23,6 +23,7 @@ pub enum MemoryMapError {
     InvalidIndex,
     IndexOutOfBounds,
     InvalidMapType,
+    DoubleAllocation(usize),
     NullPointer,
 }
 
@@ -242,9 +243,13 @@ mod tests {
 
         // Test by index allocation
         let double_alloc = map.alloc_at(idx2);
-        assert!(matches!(double_alloc, Err(MemoryMapError::InvalidIndex)));
-        let idx1423 = map.alloc_at(1423);
-        assert!(idx1423.is_ok());
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(idx2))
+        ));
+
+        map.alloc_at(1423)
+            .expect("Allocation should have been performed succesfully");
 
         // Test deallocation and reuse
         map.dealloc(idx1).unwrap();

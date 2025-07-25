@@ -105,7 +105,7 @@ impl StandardMemoryMap {
 
         let third_word_mut = get_u64_mut(self.memory, self.size, third_word_idx)?;
         if *third_word_mut & third_value != 0 {
-            return Err(MemoryMapError::InvalidIndex);
+            return Err(MemoryMapError::DoubleAllocation(index));
         }
 
         // Mark as allocated in third level
@@ -183,26 +183,26 @@ mod tests {
         let required_size = get_required_size();
         let (data, ptr) = create_aligned_memory(required_size);
 
-        let map_result = StandardMemoryMap::new(ptr, data.len());
-        assert!(
-            map_result.is_ok(),
-            "Should create map with sufficient memory"
-        );
-
-        let mut map = map_result.unwrap();
+        let mut map = StandardMemoryMap::new(ptr, data.len())
+            .expect("Should create map with sufficient memory.");
 
         map.alloc_at(1552).unwrap();
         let double_alloc = map.alloc_at(1552);
 
         // Try allocate on the same address
-        assert!(matches!(double_alloc, Err(MemoryMapError::InvalidIndex)));
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(1552))
+        ));
         assert_eq!(map.is_allocated(1552).unwrap(), true);
 
         map.alloc().unwrap();
         let double_alloc = map.alloc_at(0);
 
-        // Conflict with auto alloc
-        assert!(matches!(double_alloc, Err(MemoryMapError::InvalidIndex)));
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(0))
+        ));
     }
 
     #[test]
