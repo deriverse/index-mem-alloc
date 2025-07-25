@@ -23,6 +23,7 @@ pub enum MemoryMapError {
     InvalidIndex,
     IndexOutOfBounds,
     InvalidMapType,
+    DoubleAllocation(usize),
     NullPointer,
 }
 
@@ -104,6 +105,15 @@ impl MemoryMap {
             Self::Max(map) => map.alloc(),
             Self::Standard(map) => map.alloc(),
             Self::Small(map) => map.alloc(),
+        }
+    }
+
+    /// Mark a specific index as allocated
+    pub fn alloc_at(&mut self, index: usize) -> Result<(), MemoryMapError> {
+        match self {
+            MemoryMap::Max(map) => map.alloc_at(index),
+            MemoryMap::Standard(map) => map.alloc_at(index),
+            MemoryMap::Small(map) => map.alloc_at(index),
         }
     }
 
@@ -230,6 +240,16 @@ mod tests {
         let idx1 = map.alloc().unwrap();
         let idx2 = map.alloc().unwrap();
         assert_ne!(idx1, idx2);
+
+        // Test by index allocation
+        let double_alloc = map.alloc_at(idx2);
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(idx2))
+        ));
+
+        map.alloc_at(1423)
+            .expect("Allocation should have been performed succesfully");
 
         // Test deallocation and reuse
         map.dealloc(idx1).unwrap();

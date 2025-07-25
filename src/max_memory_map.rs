@@ -66,6 +66,44 @@ impl MaxMemoryMap {
         Ok((first << 12) + (second << 6) + third)
     }
 
+    /// Mark a specific index as allocated
+    pub(crate) fn alloc_at(&mut self, index: usize) -> Result<(), MemoryMapError> {
+        if index > MAX_INDEX {
+            return Err(MemoryMapError::InvalidIndex);
+        }
+        let first_idx = index >> 12;
+        let second_idx = (index & 0xfff) >> 6;
+        let bit_in_third = index & 0x3f;
+
+        let second_word_idx = 1 + first_idx;
+        let third_word_idx = 65 + (index >> 6);
+        let third_value = 1u64 << bit_in_third;
+
+        let third_word_mut = get_u64_mut(self.memory, self.size, third_word_idx)?;
+        if *third_word_mut & third_value != 0 {
+            return Err(MemoryMapError::DoubleAllocation(index));
+        }
+
+        // Mark as allocated in third level
+        *third_word_mut |= third_value;
+
+        // Update second level if needed
+        if *third_word_mut == u64::MAX {
+            let second_value = 1u64 << second_idx;
+            let second_word_mut = get_u64_mut(self.memory, self.size, second_word_idx)?;
+            *second_word_mut |= second_value;
+
+            // Update first level if needed
+            if *second_word_mut == u64::MAX {
+                let first_value = 1u64 << first_idx;
+                let first_word_mut = get_u64_mut(self.memory, self.size, 0)?;
+                *first_word_mut |= first_value;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Deallocate a previously allocated slot
     pub(crate) fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
         if index > MAX_INDEX {
@@ -141,6 +179,33 @@ pub(crate) mod tests {
     // Calculate required memory size for max map
     fn get_required_size() -> usize {
         (1 + 64 + 64 * 64) * size_of::<u64>()
+    }
+
+    #[test]
+    fn allocation_by_index() {
+        let required_size = get_required_size();
+        let (data, ptr) = create_aligned_memory(required_size);
+
+        let mut map =
+            MaxMemoryMap::new(ptr, data.len()).expect("Should create map with sufficient memory.");
+
+        map.alloc_at(1552).unwrap();
+        let double_alloc = map.alloc_at(1552);
+
+        // Try allocate on the same address
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(1552))
+        ));
+        assert_eq!(map.is_allocated(1552).unwrap(), true);
+
+        map.alloc().unwrap();
+        let double_alloc = map.alloc_at(0);
+
+        assert!(matches!(
+            double_alloc,
+            Err(MemoryMapError::DoubleAllocation(0))
+        ));
     }
 
     #[test]
