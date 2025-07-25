@@ -9,7 +9,6 @@ use crate::{
 };
 use solana_program::account_info::AccountInfo;
 use std::{
-    iter::Map,
     mem::{align_of, size_of},
     ptr::NonNull,
 };

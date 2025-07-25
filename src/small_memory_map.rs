@@ -169,8 +169,8 @@ mod tests {
         let (data, ptr) = create_aligned_memory(required_size);
         let (data2, ptr2) = create_aligned_memory(required_size);
 
-        let mut map_result = SmallMemoryMap::new(ptr, data.len()).unwrap();
-        let mut map_result2 = SmallMemoryMap::new(ptr2, data2.len()).unwrap();
+        let mut map = SmallMemoryMap::new(ptr, data.len()).unwrap();
+        let mut map2 = SmallMemoryMap::new(ptr2, data2.len()).unwrap();
 
         let transform = |map: &mut SmallMemoryMap| {
             map.alloc().unwrap();
@@ -180,35 +180,29 @@ mod tests {
             map.alloc_at(300).unwrap();
         };
 
-        transform(&mut map_result);
-        transform(&mut map_result2);
+        transform(&mut map);
+        transform(&mut map2);
 
         assert!(
-            map_result == map_result2,
+            map == map2,
             "After simmilar transformation maps must be the same"
         );
-        map_result.alloc_at(10).unwrap();
+        map.alloc_at(10).unwrap();
 
         assert_ne!(
-            map_result, map_result2,
+            map, map2,
             "Adter different sequence of transformation maps must not be same"
         );
 
-        map_result.reset().unwrap();
-        map_result2.reset().unwrap();
+        map.reset().unwrap();
+        map2.reset().unwrap();
 
-        assert_eq!(
-            map_result, map_result2,
-            "After reseteting 2 maps they must be the same"
-        );
+        assert_eq!(map, map2, "After reseteting 2 maps they must be the same");
         let (data3, ptr3) = create_aligned_memory(required_size);
 
         let new_map = SmallMemoryMap::new(ptr3, data3.len()).unwrap();
 
-        assert_eq!(
-            new_map, map_result,
-            "Reseted map must be equal to an empty map"
-        );
+        assert_eq!(new_map, map, "Reseted map must be equal to an empty map");
     }
 
     #[test]
