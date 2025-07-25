@@ -11,6 +11,7 @@ use solana_program::account_info::AccountInfo;
 use std::{
     mem::{align_of, size_of},
     ptr::NonNull,
+    str::Matches,
 };
 
 /// Error types that can occur during memory map operations
@@ -39,7 +40,7 @@ pub enum MapType {
 }
 
 /// Memory map implementations
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MemoryMap {
     /// 3-level memory map with 64 bits in first level
     Max(MaxMemoryMap),
@@ -51,29 +52,28 @@ pub enum MemoryMap {
 
 impl PartialEq for MemoryMap {
     fn eq(&self, other: &Self) -> bool {
-        (match self {
-            MemoryMap::Max(_self) => {
-                if let MemoryMap::Max(other) = other {
-                    _self == other
+        if self.len() != other.len() && self.get_type() != other.get_type() {
+            return false;
+        }
+
+        let words_amount = self.len() / (size_of::<u64>() / size_of::<u8>());
+        let size = self.len();
+
+        let self_mem = self.get_memory();
+        let other_mem = other.get_memory();
+
+        (0..words_amount)
+            .into_iter()
+            .try_for_each(|index| {
+                if *get_u64(self_mem, size, index).unwrap()
+                    == *get_u64(other_mem, size, index).unwrap()
+                {
+                    Ok(())
                 } else {
-                    false
+                    Err(())
                 }
-            }
-            MemoryMap::Standard(_self) => {
-                if let MemoryMap::Standard(other) = other {
-                    _self == other
-                } else {
-                    false
-                }
-            }
-            MemoryMap::Small(_self) => {
-                if let MemoryMap::Small(other) = other {
-                    _self == other
-                } else {
-                    false
-                }
-            }
-        }) && self.len() == other.len()
+            })
+            .is_ok()
     }
 }
 
@@ -187,6 +187,14 @@ impl MemoryMap {
             MemoryMap::Small(_) => MapType::Small,
         }
     }
+
+    fn get_memory(&self) -> NonNull<u8> {
+        match self {
+            MemoryMap::Max(map) => map.memory,
+            MemoryMap::Standard(map) => map.memory,
+            MemoryMap::Small(map) => map.memory,
+        }
+    }
 }
 
 /// Helper function to get mutable u64 at specified index
@@ -272,6 +280,45 @@ mod tests {
             map != map3,
             "Empty maps with different types must not be similar"
         );
+
+        let required_size = 2088;
+        let mut data = create_aligned_buffer(required_size);
+        let mut data2 = create_aligned_buffer(required_size);
+
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map2 = MemoryMap::new_from_slice(&mut data2, 0, MapType::Standard).unwrap();
+
+        let transform = |map: &mut MemoryMap| {
+            map.alloc().unwrap();
+            map.alloc().unwrap();
+            map.alloc_at(100).unwrap();
+            map.alloc_at(200).unwrap();
+            map.alloc_at(300).unwrap();
+        };
+
+        transform(&mut map);
+        transform(&mut map2);
+
+        assert!(
+            map == map2,
+            "After simmilar transformation maps must be the same"
+        );
+        map.alloc_at(10).unwrap();
+
+        assert_ne!(
+            map, map2,
+            "Adter different sequence of transformation maps must not be same"
+        );
+
+        map.reset().unwrap();
+        map2.reset().unwrap();
+
+        assert_eq!(map, map2, "After reseteting 2 maps they must be the same");
+        let mut data = create_aligned_buffer(required_size);
+
+        let new_map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+
+        assert_eq!(new_map, map, "Reseted map must be equal to an empty map");
     }
 
     #[test]

@@ -9,23 +9,8 @@ const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BIT
 /// Standard memory map implementation (3 levels, 4 bits at first level)
 #[derive(Clone)]
 pub struct StandardMemoryMap {
-    memory: NonNull<u8>,
+    pub(crate) memory: NonNull<u8>,
     pub(crate) size: usize,
-}
-
-impl PartialEq for StandardMemoryMap {
-    fn eq(&self, other: &Self) -> bool {
-        (0..self.size)
-            .into_iter()
-            .try_for_each(|index| unsafe {
-                if *self.memory.as_ptr().add(index) != *other.memory.as_ptr().add(index) {
-                    Err(())
-                } else {
-                    Ok(())
-                }
-            })
-            .is_ok()
-    }
 }
 
 impl std::fmt::Debug for StandardMemoryMap {
@@ -197,48 +182,6 @@ mod tests {
 
     fn get_required_size() -> usize {
         (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>()
-    }
-
-    #[test]
-    fn eq_test() {
-        let required_size = get_required_size();
-        let (data, ptr) = create_aligned_memory(required_size);
-        let (data2, ptr2) = create_aligned_memory(required_size);
-
-        let mut map = StandardMemoryMap::new(ptr, data.len()).unwrap();
-        let mut map2 = StandardMemoryMap::new(ptr2, data2.len()).unwrap();
-
-        let transform = |map: &mut StandardMemoryMap| {
-            map.alloc().unwrap();
-            map.alloc().unwrap();
-            map.alloc_at(100).unwrap();
-            map.alloc_at(200).unwrap();
-            map.alloc_at(300).unwrap();
-        };
-
-        transform(&mut map);
-        transform(&mut map2);
-
-        assert!(
-            map == map2,
-            "After simmilar transformation maps must be the same"
-        );
-        map.alloc_at(10).unwrap();
-
-        assert_ne!(
-            map, map2,
-            "Adter different sequence of transformation maps must not be same"
-        );
-
-        map.reset().unwrap();
-        map2.reset().unwrap();
-
-        assert_eq!(map, map2, "After reseteting 2 maps they must be the same");
-        let (data3, ptr3) = create_aligned_memory(required_size);
-
-        let new_map = StandardMemoryMap::new(ptr3, data3.len()).unwrap();
-
-        assert_eq!(new_map, map, "Reseted map must be equal to an empty map");
     }
 
     #[test]
