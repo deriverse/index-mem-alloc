@@ -270,29 +270,28 @@ mod tests {
     #[test]
     fn eq_test() {
         let mut buffer = create_aligned_buffer(512);
-        let map = MemoryMap::new_from_slice(&mut buffer, 0,
-    MapType::Small).unwrap();
-    
+        let map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
         let mut buffer = create_aligned_buffer(512);
-        let map2 = MemoryMap::new_from_slice(&mut buffer, 0,
-    MapType::Small).unwrap();
-    
+        let map2 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
         assert_eq!(map, map2, "Empty maps with similar type must be the same");
-    
+
         let mut buffer = create_aligned_buffer(2088);
-        let map3 = MemoryMap::new_from_slice(&mut buffer, 0,
-    MapType::Standard).unwrap();
-    
-        assert_ne!(map, map3, "Empty maps with different types must not be similar");
-    
+        let map3 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Standard).unwrap();
+
+        assert_ne!(
+            map, map3,
+            "Empty maps with different types must not be similar"
+        );
+
         let required_size = 2088;
         let mut data = create_aligned_buffer(required_size);
         let mut data2 = create_aligned_buffer(required_size);
-    
-        let mut map = MemoryMap::new_from_slice(&mut data, 0,
-    MapType::Standard).unwrap();     let mut map2 =
-    MemoryMap::new_from_slice(&mut data2, 0, MapType::Standard).unwrap();
-    
+
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map2 = MemoryMap::new_from_slice(&mut data2, 0, MapType::Standard).unwrap();
+
         let transform = |map: &mut MemoryMap| {
             map.alloc().unwrap();
             map.alloc().unwrap();
@@ -300,27 +299,29 @@ mod tests {
             map.alloc_at(200).unwrap();
             map.alloc_at(300).unwrap();
         };
-    
+
         transform(&mut map);
         transform(&mut map2);
-    
-        assert_eq!(map, map2, "After simmilar transformation maps must be the same");
+
+        assert_eq!(
+            map, map2,
+            "After simmilar transformation maps must be the same"
+        );
         map.alloc_at(10).unwrap();
-    
+
         assert_ne!(
             map, map2,
             "Adter different sequence of transformation maps must not be same"
         );
-    
+
         map.reset().unwrap();
         map2.reset().unwrap();
-    
+
         assert_eq!(map, map2, "After reseteting 2 maps they must be the same");
         let mut data = create_aligned_buffer(required_size);
-    
-        let new_map = MemoryMap::new_from_slice(&mut data, 0,
-    MapType::Standard).unwrap();
-    
+
+        let new_map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+
         assert_eq!(new_map, map, "Reseted map must be equal to an empty map");
     }
 
@@ -356,10 +357,15 @@ mod tests {
 
         // Test by index allocation
         let double_alloc = map.alloc_at(idx2);
-        assert!(matches!(
-            double_alloc,
-            Err(MemoryMapError::DoubleAllocation(idx2))
-        ));
+
+        assert!(
+            match double_alloc {
+                Err(MemoryMapError::DoubleAllocation(index)) => index == idx2,
+                _ => false,
+            },
+            "Expected {:?}",
+            MemoryMapError::DoubleAllocation(idx2)
+        );
 
         map.alloc_at(1423)
             .expect("Allocation should have been performed succesfully");
