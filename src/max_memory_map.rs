@@ -169,11 +169,11 @@ impl MaxMemoryMap {
 pub(crate) mod tests {
     use super::*;
     use crate::{create_aligned_memory, MapType, MemoryMap};
-    use std::{cmp::min, ptr::NonNull};
+    use std::cmp::min;
 
     // Calculate required memory size for max map
     fn get_required_size() -> usize {
-        (1 + 64 + 64 * 64) * size_of::<u64>()
+        MaxMemoryMap::SIZE
     }
 
     #[test]

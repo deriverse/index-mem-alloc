@@ -186,7 +186,7 @@ mod tests {
     use crate::{create_aligned_memory, MapType, MemoryMap};
 
     fn get_required_size() -> usize {
-        (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>()
+        StandardMemoryMap::SIZE
     }
 
     #[test]

@@ -255,6 +255,7 @@ pub(crate) fn create_aligned_memory(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn create_aligned_buffer(size: usize) -> Vec<u8> {
@@ -269,15 +270,15 @@ mod tests {
 
     #[test]
     fn eq_test() {
-        let mut buffer = create_aligned_buffer(512);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
         let map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
 
-        let mut buffer = create_aligned_buffer(512);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
         let map2 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
 
         assert_eq!(map, map2, "Empty maps with similar type must be the same");
 
-        let mut buffer = create_aligned_buffer(2088);
+        let mut buffer = create_aligned_buffer(StandardMemoryMap::SIZE);
         let map3 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Standard).unwrap();
 
         assert_ne!(
@@ -285,7 +286,7 @@ mod tests {
             "Empty maps with different types must not be similar"
         );
 
-        let required_size = 2088;
+        let required_size = StandardMemoryMap::SIZE;
         let mut data = create_aligned_buffer(required_size);
         let mut data2 = create_aligned_buffer(required_size);
 
@@ -327,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_memory_map_creation() {
-        let mut buffer = create_aligned_buffer(1024);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE * 2);
 
         // Test successful creation
         let result = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small);
@@ -347,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_memory_map_operations() {
-        let mut buffer = create_aligned_buffer(512);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
         let mut map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
 
         // Test allocation
@@ -359,12 +360,9 @@ mod tests {
         let double_alloc = map.alloc_at(idx2);
 
         assert!(
-            match double_alloc {
-                Err(MemoryMapError::DoubleAllocation(index)) => index == idx2,
-                _ => false,
-            },
-            "Expected {:?}",
-            MemoryMapError::DoubleAllocation(idx2)
+            matches!(double_alloc, Err(MemoryMapError::DoubleAllocation(index)) if index == idx2),
+            "Incorrect index in Double Allocation error, expected error on index: {}",
+            idx2
         );
 
         map.alloc_at(1423)

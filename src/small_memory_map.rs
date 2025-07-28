@@ -130,7 +130,6 @@ impl SmallMemoryMap {
 mod tests {
     use super::*;
     use crate::{create_aligned_memory, MapType, MemoryMap};
-    use std::mem::size_of;
 
     fn get_required_size() -> usize {
         SmallMemoryMap::SIZE
