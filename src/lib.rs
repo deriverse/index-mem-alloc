@@ -39,7 +39,7 @@ pub enum MapType {
 }
 
 /// Memory map implementations
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MemoryMap {
     /// 3-level memory map with 64 bits in first level
     Max(MaxMemoryMap),
@@ -47,6 +47,38 @@ pub enum MemoryMap {
     Standard(StandardMemoryMap),
     /// 2-level memory map
     Small(SmallMemoryMap),
+}
+
+impl MemoryMap {
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::Small(_) => SmallMemoryMap::SIZE,
+            Self::Standard(_) => StandardMemoryMap::SIZE,
+            Self::Max(_) => MaxMemoryMap::SIZE,
+        }
+    }
+}
+
+impl PartialEq for MemoryMap {
+    fn eq(&self, other: &Self) -> bool {
+        if self.get_type() != other.get_type() {
+            return false;
+        }
+
+        let words_to_compare = self.len() / size_of::<u64>();
+        let self_mem = self.get_memory();
+        let other_mem = other.get_memory();
+
+        (0..words_to_compare).all(|index| {
+            match (
+                get_u64(self_mem, self.len(), index),
+                get_u64(other_mem, other.len(), index),
+            ) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            }
+        })
+    }
 }
 
 impl MemoryMap {
@@ -90,12 +122,24 @@ impl MemoryMap {
 
         // Create the appropriate memory map implementation
         match map_type {
-            MapType::Max => Ok(Self::Max(MaxMemoryMap::new(memory, remaining_size)?)),
-            MapType::Standard => Ok(Self::Standard(StandardMemoryMap::new(
-                memory,
-                remaining_size,
-            )?)),
-            MapType::Small => Ok(Self::Small(SmallMemoryMap::new(memory, remaining_size)?)),
+            MapType::Max => {
+                if remaining_size < MaxMemoryMap::SIZE {
+                    return Err(MemoryMapError::InsufficientMemory);
+                }
+                Ok(Self::Max(MaxMemoryMap { memory }))
+            }
+            MapType::Standard => {
+                if remaining_size < StandardMemoryMap::SIZE {
+                    return Err(MemoryMapError::InsufficientMemory);
+                }
+                Ok(Self::Standard(StandardMemoryMap { memory }))
+            }
+            MapType::Small => {
+                if remaining_size < SmallMemoryMap::SIZE {
+                    return Err(MemoryMapError::InsufficientMemory);
+                }
+                Ok(Self::Small(SmallMemoryMap { memory }))
+            }
         }
     }
 
@@ -143,6 +187,22 @@ impl MemoryMap {
             Self::Small(map) => map.reset(),
         }
     }
+
+    pub fn get_type(&self) -> MapType {
+        match self {
+            MemoryMap::Max(_) => MapType::Max,
+            MemoryMap::Standard(_) => MapType::Standard,
+            MemoryMap::Small(_) => MapType::Small,
+        }
+    }
+
+    fn get_memory(&self) -> NonNull<u8> {
+        match self {
+            MemoryMap::Max(map) => map.memory,
+            MemoryMap::Standard(map) => map.memory,
+            MemoryMap::Small(map) => map.memory,
+        }
+    }
 }
 
 /// Helper function to get mutable u64 at specified index
@@ -180,7 +240,7 @@ pub(crate) fn get_u64<'a>(
 }
 
 #[cfg(test)]
-pub(crate) fn create_aligned_memory(size: usize) -> (Vec<u8>, NonNull<u8>) {
+pub(crate) fn create_aligned_memory(size: usize) -> Vec<u8> {
     let mut data = vec![0u8; size + 8]; // Add extra space for alignment
 
     // Ensure proper alignment
@@ -190,15 +250,12 @@ pub(crate) fn create_aligned_memory(size: usize) -> (Vec<u8>, NonNull<u8>) {
         data.rotate_left(8 - misalignment);
     }
 
-    let ptr = data.as_mut_ptr();
-    // Safety: We just created this vector and it's properly aligned
-    let non_null_ptr = NonNull::new(ptr).expect("Vector pointer should not be null");
-
-    (data, non_null_ptr)
+    data
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn create_aligned_buffer(size: usize) -> Vec<u8> {
@@ -212,8 +269,66 @@ mod tests {
     }
 
     #[test]
+    fn eq_test() {
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
+        let map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
+        let map2 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
+
+        assert_eq!(map, map2, "Empty maps with similar type must be the same");
+
+        let mut buffer = create_aligned_buffer(StandardMemoryMap::SIZE);
+        let map3 = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Standard).unwrap();
+
+        assert_ne!(
+            map, map3,
+            "Empty maps with different types must not be similar"
+        );
+
+        let required_size = StandardMemoryMap::SIZE;
+        let mut data = create_aligned_buffer(required_size);
+        let mut data2 = create_aligned_buffer(required_size);
+
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map2 = MemoryMap::new_from_slice(&mut data2, 0, MapType::Standard).unwrap();
+
+        let transform = |map: &mut MemoryMap| {
+            map.alloc().unwrap();
+            map.alloc().unwrap();
+            map.alloc_at(100).unwrap();
+            map.alloc_at(200).unwrap();
+            map.alloc_at(300).unwrap();
+        };
+
+        transform(&mut map);
+        transform(&mut map2);
+
+        assert_eq!(
+            map, map2,
+            "After simmilar transformation maps must be the same"
+        );
+        map.alloc_at(10).unwrap();
+
+        assert_ne!(
+            map, map2,
+            "Adter different sequence of transformation maps must not be same"
+        );
+
+        map.reset().unwrap();
+        map2.reset().unwrap();
+
+        assert_eq!(map, map2, "After reseteting 2 maps they must be the same");
+        let mut data = create_aligned_buffer(required_size);
+
+        let new_map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+
+        assert_eq!(new_map, map, "Reseted map must be equal to an empty map");
+    }
+
+    #[test]
     fn test_memory_map_creation() {
-        let mut buffer = create_aligned_buffer(1024);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE * 2);
 
         // Test successful creation
         let result = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small);
@@ -233,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_memory_map_operations() {
-        let mut buffer = create_aligned_buffer(512);
+        let mut buffer = create_aligned_buffer(SmallMemoryMap::SIZE);
         let mut map = MemoryMap::new_from_slice(&mut buffer, 0, MapType::Small).unwrap();
 
         // Test allocation
@@ -243,10 +358,12 @@ mod tests {
 
         // Test by index allocation
         let double_alloc = map.alloc_at(idx2);
-        assert!(matches!(
-            double_alloc,
-            Err(MemoryMapError::DoubleAllocation(idx2))
-        ));
+
+        assert!(
+            matches!(double_alloc, Err(MemoryMapError::DoubleAllocation(index)) if index == idx2),
+            "Incorrect index in Double Allocation error, expected error on index: {}",
+            idx2
+        );
 
         map.alloc_at(1423)
             .expect("Allocation should have been performed succesfully");
