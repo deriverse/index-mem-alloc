@@ -12,18 +12,26 @@ use std::{
     mem::{align_of, size_of},
     ptr::NonNull,
 };
+use thiserror::Error;
 
 /// Error types that can occur during memory map operations
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum MemoryMapError {
-    InvalidOffset,
+    #[error("Invalid offset. Requested {offset} while max is {max_len}")]
+    InvalidOffset { offset: usize, max_len: usize },
+    #[error("No available slots")]
     NoAvailableSlots,
+    #[error("Alignmet error")]
     AlignmentError,
-    InsufficientMemory,
-    InvalidIndex,
-    IndexOutOfBounds,
-    InvalidMapType,
+    #[error("Remaining memory ({size}) is insufficient for Memory Map of type {map_type:?}")]
+    InsufficientMemory { size: usize, map_type: MapType },
+    #[error("Invalid index {0}")]
+    InvalidIndex(usize),
+    #[error("Index {index} is out of bounds 0..{right_bound}")]
+    IndexOutOfBounds { index: usize, right_bound: usize },
+    #[error("Double allocation on index {0}")]
     DoubleAllocation(usize),
+    #[error("Null pointer")]
     NullPointer,
 }
 
@@ -106,7 +114,10 @@ impl MemoryMap {
     ) -> Result<Self, MemoryMapError> {
         // Check offset validity
         if offset >= data.len() {
-            return Err(MemoryMapError::InvalidOffset);
+            return Err(MemoryMapError::InvalidOffset {
+                offset,
+                max_len: data.len(),
+            });
         }
 
         // Check alignment for u64
@@ -124,19 +135,28 @@ impl MemoryMap {
         match map_type {
             MapType::Max => {
                 if remaining_size < MaxMemoryMap::SIZE {
-                    return Err(MemoryMapError::InsufficientMemory);
+                    return Err(MemoryMapError::InsufficientMemory {
+                        size: remaining_size,
+                        map_type: MapType::Max,
+                    });
                 }
                 Ok(Self::Max(MaxMemoryMap { memory }))
             }
             MapType::Standard => {
                 if remaining_size < StandardMemoryMap::SIZE {
-                    return Err(MemoryMapError::InsufficientMemory);
+                    return Err(MemoryMapError::InsufficientMemory {
+                        size: remaining_size,
+                        map_type: MapType::Standard,
+                    });
                 }
                 Ok(Self::Standard(StandardMemoryMap { memory }))
             }
             MapType::Small => {
                 if remaining_size < SmallMemoryMap::SIZE {
-                    return Err(MemoryMapError::InsufficientMemory);
+                    return Err(MemoryMapError::InsufficientMemory {
+                        size: remaining_size,
+                        map_type: MapType::Small,
+                    });
                 }
                 Ok(Self::Small(SmallMemoryMap { memory }))
             }
@@ -213,7 +233,10 @@ pub(crate) fn get_u64_mut<'a>(
     index: usize,
 ) -> Result<&'a mut u64, MemoryMapError> {
     if index * size_of::<u64>() >= size {
-        return Err(MemoryMapError::IndexOutOfBounds);
+        return Err(MemoryMapError::IndexOutOfBounds {
+            index: index * size_of::<u64>(),
+            right_bound: size,
+        });
     }
 
     unsafe {
@@ -230,7 +253,10 @@ pub(crate) fn get_u64<'a>(
     index: usize,
 ) -> Result<&'a u64, MemoryMapError> {
     if index * size_of::<u64>() >= size {
-        return Err(MemoryMapError::IndexOutOfBounds);
+        return Err(MemoryMapError::IndexOutOfBounds {
+            index: index * size_of::<u64>(),
+            right_bound: size,
+        });
     }
 
     unsafe {
@@ -343,7 +369,10 @@ mod tests {
 
         // Test invalid offset
         let invalid_result = MemoryMap::new_from_slice(&mut buffer, 2048, MapType::Small);
-        assert!(matches!(invalid_result, Err(MemoryMapError::InvalidOffset)));
+        assert!(matches!(
+            invalid_result,
+            Err(MemoryMapError::InvalidOffset { .. })
+        ));
     }
 
     #[test]

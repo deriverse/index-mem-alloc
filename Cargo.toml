@@ -8,6 +8,7 @@ license = "Apache-2.0"
 homepage = "https://deriverse.io/"
 
 [dependencies]
+thiserror = "1.0.56"
 solana-program = "^2.0.1"
 
 [workspace.lints.clippy]

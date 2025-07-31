@@ -64,7 +64,7 @@ impl MaxMemoryMap {
     /// Mark a specific index as allocated
     pub(crate) fn alloc_at(&mut self, index: usize) -> Result<(), MemoryMapError> {
         if index > MAX_INDEX {
-            return Err(MemoryMapError::InvalidIndex);
+            return Err(MemoryMapError::InvalidIndex(index));
         }
         let first_idx = index >> 12;
         let second_idx = (index & 0xfff) >> 6;
@@ -102,7 +102,7 @@ impl MaxMemoryMap {
     /// Deallocate a previously allocated slot
     pub(crate) fn dealloc(&mut self, index: usize) -> Result<(), MemoryMapError> {
         if index > MAX_INDEX {
-            return Err(MemoryMapError::InvalidIndex);
+            return Err(MemoryMapError::InvalidIndex(index));
         }
 
         // max memory map - 3 levels
@@ -127,7 +127,7 @@ impl MaxMemoryMap {
     /// Check if a specific index is allocated
     pub(crate) fn is_allocated(&self, index: usize) -> Result<bool, MemoryMapError> {
         if index > MAX_INDEX {
-            return Err(MemoryMapError::InvalidIndex);
+            return Err(MemoryMapError::InvalidIndex(index));
         }
 
         // Calculate the third level word index (same as in dealloc)
@@ -294,7 +294,7 @@ pub(crate) mod tests {
         let invalid_index = 1_000_000; // Way beyond our capacity
         let dealloc_result = map.dealloc(invalid_index);
         assert!(
-            matches!(dealloc_result, Err(MemoryMapError::InvalidIndex)),
+            matches!(dealloc_result, Err(MemoryMapError::InvalidIndex(index)) if index == invalid_index),
             "Should reject invalid index"
         );
     }
@@ -549,7 +549,7 @@ pub(crate) mod tests {
         // Test invalid index
         let invalid_result = map.is_allocated(MAX_INDEX + 1);
         assert!(
-            matches!(invalid_result, Err(MemoryMapError::InvalidIndex)),
+            matches!(invalid_result, Err(MemoryMapError::InvalidIndex(index)) if index == MAX_INDEX + 1),
             "Should return InvalidIndex for index beyond MAX_INDEX"
         );
 
