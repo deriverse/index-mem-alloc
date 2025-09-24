@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [unreleased]
+
+### Added
+- `ExtendedMemoryMap` with 8 bits on first leverl, 64 on second, 64 on third
+
+### Changed
+- Removed magic constant for thid index calculation in standart_memory_map, max_memory_map
+
 ## [v0.1.4] - 2025-07-28
 
 ### Added
