@@ -182,7 +182,7 @@ impl MemoryMap {
             Self::Max(map) => map.dealloc(index),
             Self::Standard(map) => map.dealloc(index),
             Self::Small(map) => map.dealloc(index),
-            MemoryMap::Extended(map) => map.dealloc(index),
+            Self::Extended(map) => map.dealloc(index),
         }
     }
 
@@ -192,7 +192,7 @@ impl MemoryMap {
             Self::Max(map) => map.is_allocated(index),
             Self::Standard(map) => map.is_allocated(index),
             Self::Small(map) => map.is_allocated(index),
-            MemoryMap::Extended(map) => map.is_allocated(index),
+            Self::Extended(map) => map.is_allocated(index),
         }
     }
 
@@ -202,7 +202,7 @@ impl MemoryMap {
             Self::Max(map) => map.reset(),
             Self::Standard(map) => map.reset(),
             Self::Small(map) => map.reset(),
-            MemoryMap::Extended(map) => map.reset(),
+            Self::Extended(map) => map.reset(),
         }
     }
 
