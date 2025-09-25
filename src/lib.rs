@@ -34,7 +34,7 @@ pub enum MemoryMapError {
 pub enum MapType {
     /// 3-level memory map with 64 bits in first level
     Max,
-    /// 3-level memory map with 8 bits in first level
+    /// 3-level memory map with 32 bits in first level
     Extended,
     /// 3-level memory map with 4 bits in first level
     Standard,
@@ -47,7 +47,7 @@ pub enum MapType {
 pub enum MemoryMap {
     /// 3-level memory map with 64 bits in first level
     Max(MaxMemoryMap),
-    /// 3-level memory map with 8 buts in first level
+    /// 3-level memory map with 32 buts in first level
     Extended(ExtendedMemoryMap),
     /// 3-level memory map with 4 bits in first level
     Standard(StandardMemoryMap),
