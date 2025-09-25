@@ -1,25 +1,25 @@
 use crate::{get_first_zero_bit::get_first_zero_bit, get_u64, get_u64_mut, MemoryMapError};
 use std::{mem::size_of, ptr::NonNull};
 
-const FIRST_LEVEL_BITS: usize = 4;
+const FIRST_LEVEL_BITS: usize = 32;
 const SECOND_LEVEL_BITS: usize = 64;
 const THIRD_LEVEL_BITS: usize = 64;
-const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BITS) - 1; // 16383
+const MAX_INDEX: usize = (FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BITS) - 1; // 32767
 
-/// Standard memory map implementation (3 levels, 4 bits at first level)
+/// Extended memory map implementation (3 levels, 8 bits at first level)
 #[derive(Clone)]
-pub struct StandardMemoryMap {
+pub struct ExtendedMemoryMap {
     pub(crate) memory: NonNull<u8>,
 }
 
-impl std::fmt::Debug for StandardMemoryMap {
+impl std::fmt::Debug for ExtendedMemoryMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Standard Memory Map")
+        write!(f, "Extended Memory Map")
     }
 }
 
-impl StandardMemoryMap {
-    /// Calculate required memory size for standard map:
+impl ExtendedMemoryMap {
+    /// Calculate required memory size for Extended map:
     /// - First level: 1 word to track available blocks in level 2
     /// - Second level: FIRST_LEVEL_BITS words (one per bit in first level)
     /// - Third level: FIRST_LEVEL_BITS*SECOND_LEVEL_BITS words (one per bit in
@@ -66,7 +66,7 @@ impl StandardMemoryMap {
             return Err(MemoryMapError::InvalidIndex);
         }
 
-        // standard memory map - 3 levels
+        // Extended memory map - 3 levels
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
         let second_idx = 1 + first;
@@ -164,9 +164,9 @@ impl StandardMemoryMap {
     }
 }
 
-impl PartialEq for StandardMemoryMap {
+impl PartialEq for ExtendedMemoryMap {
     fn eq(&self, other: &Self) -> bool {
-        const WORDS_TO_COMPARE: usize = StandardMemoryMap::SIZE / size_of::<u64>();
+        const WORDS_TO_COMPARE: usize = ExtendedMemoryMap::SIZE / size_of::<u64>();
 
         (0..WORDS_TO_COMPARE).all(|index| {
             match (
@@ -186,7 +186,7 @@ mod tests {
     use crate::{create_aligned_memory, MapType, MemoryMap};
 
     fn get_required_size() -> usize {
-        StandardMemoryMap::SIZE
+        ExtendedMemoryMap::SIZE
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         let required_size = get_required_size();
         let mut data = create_aligned_memory(required_size);
 
-        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Extended).unwrap();
 
         map.alloc_at(1552).unwrap();
         let double_alloc = map.alloc_at(1552);
@@ -216,13 +216,13 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_map_level_transitions() {
+    fn test_extended_map_level_transitions() {
         // Create memory with sufficient size for level transitions
         let required_size = get_required_size();
         let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Extended).unwrap();
 
         // Allocate indices to cross level boundaries
         let mut all_indices = Vec::new();
@@ -240,7 +240,7 @@ mod tests {
             }
         }
 
-        // Verify level transition patterns (specific to StandardMemoryMap)
+        // Verify level transition patterns (specific to ExtendedMemoryMap)
         if all_indices.len() > 64 {
             // Check first block (first=0, second=0..63)
             for i in 0..64 {
@@ -268,12 +268,12 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_map_allocation_and_deallocation() {
+    fn test_extended_map_allocation_and_deallocation() {
         let required_size = get_required_size();
         let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Extended).unwrap();
 
         // Check initial state
         assert!(!map.is_allocated(0).unwrap());
@@ -307,20 +307,20 @@ mod tests {
         assert!(map.is_allocated(idx4).unwrap());
 
         // Test invalid index deallocation
-        let result = map.dealloc(20000);
+        let result = map.dealloc(FIRST_LEVEL_BITS * SECOND_LEVEL_BITS * THIRD_LEVEL_BITS + 1);
         assert!(matches!(result, Err(MemoryMapError::InvalidIndex)));
     }
 
     #[test]
-    fn test_standard_map_capacity() {
+    fn test_extended_map_capacity() {
         let required_size = get_required_size();
         let mut data = create_aligned_memory(required_size);
 
         data.fill(0);
-        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Extended).unwrap();
 
-        // StandardMemoryMap with 4 bits at first level can allocate up to 4 * 64 * 64 =
-        // 16384 indices Let's allocate a reasonable subset to test
+        // ExtendedMemoryMap with 8 bits at first level can allocate up to 8 * 64 * 64 =
+        // 32767 indices Let's allocate a reasonable subset to test
         let mut allocated = Vec::new();
         for _ in 0..1000 {
             match map.alloc() {
@@ -363,17 +363,17 @@ mod tests {
         let mut data = create_aligned_memory(required_size);
         data.fill(0);
 
-        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Standard).unwrap();
+        let mut map = MemoryMap::new_from_slice(&mut data, 0, MapType::Extended).unwrap();
 
-        // Test specific boundary indices for standard map (3 levels: 4, 64, 64)
+        // Test specific boundary indices for Extended map (3 levels: 8, 64, 64)
         let test_indices = [
             0,    // first=0, second=0, third=0
             63,   // first=0, second=0, third=63 (last in first third-level block)
             64,   // first=0, second=1, third=0 (first in second third-level block)
             65,   // first=0, second=1, third=1
             4095, // first=0, second=63, third=63 (last in first second-level block)
-            4096, // first=1, second=0, third=0 (first in second second-level block)
-            4097, // first=1, second=0, third=1
+            8192, // first=1, second=0, third=0 (first in second second-level block)
+            8193, // first=1, second=0, third=1
         ];
 
         // Initially all should be unallocated
