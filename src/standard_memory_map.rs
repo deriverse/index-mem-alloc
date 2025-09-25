@@ -14,7 +14,7 @@ pub struct StandardMemoryMap {
 
 impl std::fmt::Debug for StandardMemoryMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Standart Memory Map")
+        write!(f, "Standard Memory Map")
     }
 }
 

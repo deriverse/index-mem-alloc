@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [unreleased]
 
 ### Added
-- `ExtendedMemoryMap` with 8 bits on first leverl, 64 on second, 64 on third
+- `ExtendedMemoryMap` with 32 bits on first leverl, 64 on second, 64 on third
 
 ### Changed
 - Removed magic constant for thid index calculation in standart_memory_map, max_memory_map

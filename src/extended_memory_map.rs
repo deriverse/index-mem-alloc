@@ -27,8 +27,6 @@ impl ExtendedMemoryMap {
     pub(crate) const SIZE: usize =
         (1 + FIRST_LEVEL_BITS + FIRST_LEVEL_BITS * SECOND_LEVEL_BITS) * size_of::<u64>();
 
-    // 0 0 0 0 ||| 0 * 8 | 0 * 8 | 0 * 8 | 0 * 8 |||
-
     /// Allocate a new slot
     pub(crate) fn alloc(&mut self) -> Result<usize, MemoryMapError> {
         // First level allocation (FIRST_LEVEL_BITS bits)
