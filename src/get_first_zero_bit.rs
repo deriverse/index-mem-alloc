@@ -7,12 +7,13 @@ pub fn get_first_zero_bit(pattern: u64, bits: usize) -> Result<usize, MemoryMapE
         (1u64 << bits) - 1
     };
 
-    let free = (!pattern) & mask;
+    let x = (pattern & mask).trailing_ones() as usize;
 
-    if free == 0 {
-        return Err(MemoryMapError::NoAvailableSlots);
+    if x == bits {
+        Err(MemoryMapError::NoAvailableSlots)
+    } else {
+        Ok(x)
     }
-    Ok(free.trailing_zeros() as usize)
 }
 
 #[cfg(test)]

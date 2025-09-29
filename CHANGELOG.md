@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v0.1.6] - 2025-09-29
 
 ## Changed
-- `get_first_zero_bit` implemenation, added usage of `Int::trailing_zeros()` to optimize finding index of first `0` in a bitmap
+- `get_first_zero_bit` implemenation, added usage of `Int::trailing_ones()` to optimize finding index of first `0` in a bitmap
 
 ## [v.0.1.5] - 2025-09-25
 
