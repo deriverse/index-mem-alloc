@@ -372,8 +372,8 @@ mod tests {
             64,   // first=0, second=1, third=0 (first in second third-level block)
             65,   // first=0, second=1, third=1
             4095, // first=0, second=63, third=63 (last in first second-level block)
-            8192, // first=1, second=0, third=0 (first in second second-level block)
-            8193, // first=1, second=0, third=1
+            4096, // first=1, second=0, third=0 (first in second second-level block)
+            4097, // first=1, second=0, third=1
         ];
 
         // Initially all should be unallocated
