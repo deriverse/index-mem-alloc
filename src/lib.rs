@@ -1,3 +1,4 @@
+mod extended_memory_map;
 mod get_first_zero_bit;
 mod max_memory_map;
 mod small_memory_map;
@@ -7,6 +8,7 @@ use crate::{
     max_memory_map::MaxMemoryMap, small_memory_map::SmallMemoryMap,
     standard_memory_map::StandardMemoryMap,
 };
+use extended_memory_map::ExtendedMemoryMap;
 use solana_program::account_info::AccountInfo;
 use std::{
     mem::{align_of, size_of},
@@ -32,6 +34,8 @@ pub enum MemoryMapError {
 pub enum MapType {
     /// 3-level memory map with 64 bits in first level
     Max,
+    /// 3-level memory map with 32 bits in first level
+    Extended,
     /// 3-level memory map with 4 bits in first level
     Standard,
     /// 2-level memory map
@@ -43,6 +47,8 @@ pub enum MapType {
 pub enum MemoryMap {
     /// 3-level memory map with 64 bits in first level
     Max(MaxMemoryMap),
+    /// 3-level memory map with 32 buts in first level
+    Extended(ExtendedMemoryMap),
     /// 3-level memory map with 4 bits in first level
     Standard(StandardMemoryMap),
     /// 2-level memory map
@@ -55,6 +61,7 @@ impl MemoryMap {
             Self::Small(_) => SmallMemoryMap::SIZE,
             Self::Standard(_) => StandardMemoryMap::SIZE,
             Self::Max(_) => MaxMemoryMap::SIZE,
+            Self::Extended(_) => ExtendedMemoryMap::SIZE,
         }
     }
 }
@@ -128,6 +135,12 @@ impl MemoryMap {
                 }
                 Ok(Self::Max(MaxMemoryMap { memory }))
             }
+            MapType::Extended => {
+                if remaining_size < ExtendedMemoryMap::SIZE {
+                    return Err(MemoryMapError::InsufficientMemory);
+                }
+                Ok(Self::Extended(ExtendedMemoryMap { memory }))
+            }
             MapType::Standard => {
                 if remaining_size < StandardMemoryMap::SIZE {
                     return Err(MemoryMapError::InsufficientMemory);
@@ -149,6 +162,7 @@ impl MemoryMap {
             Self::Max(map) => map.alloc(),
             Self::Standard(map) => map.alloc(),
             Self::Small(map) => map.alloc(),
+            Self::Extended(map) => map.alloc(),
         }
     }
 
@@ -158,6 +172,7 @@ impl MemoryMap {
             MemoryMap::Max(map) => map.alloc_at(index),
             MemoryMap::Standard(map) => map.alloc_at(index),
             MemoryMap::Small(map) => map.alloc_at(index),
+            MemoryMap::Extended(map) => map.alloc_at(index),
         }
     }
 
@@ -167,6 +182,7 @@ impl MemoryMap {
             Self::Max(map) => map.dealloc(index),
             Self::Standard(map) => map.dealloc(index),
             Self::Small(map) => map.dealloc(index),
+            Self::Extended(map) => map.dealloc(index),
         }
     }
 
@@ -176,6 +192,7 @@ impl MemoryMap {
             Self::Max(map) => map.is_allocated(index),
             Self::Standard(map) => map.is_allocated(index),
             Self::Small(map) => map.is_allocated(index),
+            Self::Extended(map) => map.is_allocated(index),
         }
     }
 
@@ -185,6 +202,7 @@ impl MemoryMap {
             Self::Max(map) => map.reset(),
             Self::Standard(map) => map.reset(),
             Self::Small(map) => map.reset(),
+            Self::Extended(map) => map.reset(),
         }
     }
 
@@ -193,6 +211,7 @@ impl MemoryMap {
             MemoryMap::Max(_) => MapType::Max,
             MemoryMap::Standard(_) => MapType::Standard,
             MemoryMap::Small(_) => MapType::Small,
+            MemoryMap::Extended(_) => MapType::Extended,
         }
     }
 
@@ -201,6 +220,7 @@ impl MemoryMap {
             MemoryMap::Max(map) => map.memory,
             MemoryMap::Standard(map) => map.memory,
             MemoryMap::Small(map) => map.memory,
+            MemoryMap::Extended(map) => map.memory,
         }
     }
 }

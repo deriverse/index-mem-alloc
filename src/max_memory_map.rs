@@ -38,7 +38,7 @@ impl MaxMemoryMap {
         let second = get_first_zero_bit(*second_word, BITS_PER_LEVEL)?;
 
         // Third level allocation
-        let third_idx = 65 + (first * BITS_PER_LEVEL) + second;
+        let third_idx = BITS_PER_LEVEL + 1 + (first * BITS_PER_LEVEL) + second;
         let third_word = get_u64(self.memory, Self::SIZE, third_idx)?;
         let third = get_first_zero_bit(*third_word, BITS_PER_LEVEL)?;
 
@@ -71,7 +71,7 @@ impl MaxMemoryMap {
         let bit_in_third = index & 0x3f;
 
         let second_word_idx = 1 + first_idx;
-        let third_word_idx = 65 + (index >> 6);
+        let third_word_idx = BITS_PER_LEVEL + 1 + (index >> 6);
         let third_value = 1u64 << bit_in_third;
 
         let third_word_mut = get_u64_mut(self.memory, Self::SIZE, third_word_idx)?;
@@ -109,7 +109,7 @@ impl MaxMemoryMap {
         let first = index >> 12;
         let second = (index & 0xfff) >> 6;
         let second_idx = 1 + first;
-        let third_idx = 65 + (index >> 6);
+        let third_idx = BITS_PER_LEVEL + 1 + (index >> 6);
 
         // Clear allocation bits
         let third_word = get_u64_mut(self.memory, Self::SIZE, third_idx)?;
@@ -131,7 +131,7 @@ impl MaxMemoryMap {
         }
 
         // Calculate the third level word index (same as in dealloc)
-        let third_idx = 65 + (index >> 6);
+        let third_idx = BITS_PER_LEVEL + 1 + (index >> 6);
         let third_bit = index & 0x3f;
 
         // Get the third level word and check if the bit is set

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.6] - 2025-10-10
+
+## Changed
+- `get_first_zero_bit` implementation, added usage of `Int::trailing_ones()` to optimize finding index of first `0` in a bitmap
+- ExtendedMemoryMap first level changed to 16 bits
+
+## [v.0.1.5] - 2025-09-25
+
+### Added
+- `ExtendedMemoryMap` with 32 bits on first leverl, 64 on second, 64 on third
+
+### Changed
+- Removed magic constant for thid index calculation in standart_memory_map, max_memory_map
+
 ## [v0.1.4] - 2025-07-28
 
 ### Added
