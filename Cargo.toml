@@ -8,7 +8,7 @@ license = "Apache-2.0"
 homepage = "https://deriverse.io/"
 
 [dependencies]
-solana-program = "^2.2.1"
+solana-program = "3.0.0"
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"
